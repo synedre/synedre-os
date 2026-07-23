@@ -26,7 +26,7 @@ data, and (c) draws the open-core line at generic runtime vs business-specific.
 
 1. **Camps map to pillars.** `02_atlas/` is the **West (Occident)** — validate,
    schedule, orchestrate. `03_sun_wukong/` is the **East (Orient)** — execute,
-   think, transform. `core/shirka/` is the neutral engine both camps run on.
+   think, transform. `core/shyrka/` is the neutral engine both camps run on.
 2. **Automates live in `02_atlas/workers/`.** They are deterministic, reproducible
    routines (measure, audit, validate, schedule) — the nature of the West.
 3. **Agents live in `03_sun_wukong/agents/`.** They are the LLM thinkers that
@@ -62,9 +62,9 @@ data, and (c) draws the open-core line at generic runtime vs business-specific.
 - **Flat scatter as in the monolith.** Rejected: several hundred facades in one
   folder is the non-discoverability we are correcting. Grouping by functional
   family is cheap and keeps the West navigable.
-- **Automates in `core/shirka/`.** Rejected: the core is the neutral engine (the
+- **Automates in `core/shyrka/`.** Rejected: the core is the neutral engine (the
   agentic loop, the access facades). Automates are the West's scheduled layer, not
-  the engine; placing them in `core/shirka/` would blur the camp line this ADR
+  the engine; placing them in `core/shyrka/` would blur the camp line this ADR
   draws.
 
 ## Links

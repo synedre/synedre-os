@@ -13,9 +13,9 @@
 *.log
 
 # ── Private brain (moat) — NEVER in the public repo ──
-core/shirka/brain/*
-!core/shirka/brain/.gitignore
-!core/shirka/brain/README.md
+core/shyrka/brain/*
+!core/shyrka/brain/.gitignore
+!core/shyrka/brain/README.md
 
 # ── Secrets & environment ──
 .env
@@ -25,6 +25,10 @@ core/shirka/brain/*
 *.pem
 *.p12
 02_atlas/secrets/
+
+# ── Local release denylist (YOUR real tenant codenames — private) ──
+# The .example template ships; the real list never does (CLAUDE.md Rule 3).
+02_atlas/workers/release/sy_codename_denylist.txt
 
 # ── Business data (01_founder) — PII ──
 01_founder/customers/**

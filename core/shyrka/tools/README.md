@@ -12,7 +12,7 @@ isolated here.**
 ## Structure — one subfolder per family
 
 ```
-core/shirka/tools/
+core/shyrka/tools/
   browser/      # Chromium / CDP — automation, screenshots, QA capture
   three-d/      # Blender — shape reporting, character generation
   figma/        # Figma API — design intake

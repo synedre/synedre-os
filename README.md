@@ -24,7 +24,7 @@ database**. It is the shared engine behind our two public verticals,
 The moat is what the system *knows* — not what it *is*.
 
 > 🛑 No scar, no customer data, no secret must ever appear in this repository. The
-> `core/shirka/brain/` directory is gitignored **by design**.
+> `core/shyrka/brain/` directory is gitignored **by design**.
 
 ## 2. The architecture — four pillars
 
@@ -34,7 +34,7 @@ The moat is what the system *knows* — not what it *is*.
 | `01_founder/` | **The Founder** — docs, customers, leads. The business layer. |
 | `02_atlas/` | **The Orchestrator** — infra, devops, secrets, hooks, configs (`.tpl.*` templates). |
 | `03_sun_wukong/` | **The Executor** — apps, workers, skills, AI agents. The Monkey King's metamorphoses. |
-| `core/shirka/` | **The Core** — the meta-harness runtime (`brain/` is private). |
+| `core/shyrka/` | **The Core** — the meta-harness runtime (`brain/` is private). |
 | `addons/` | **The merchant frontier** — sold modules, outside the AGPL core. |
 
 Guiding principle: **execution and validation are separated — and the roles are
@@ -45,7 +45,7 @@ The camps map to the pillars: **`02_atlas/` is the West (Occident)** — the tit
 that validates, schedules and orchestrates; the deterministic automates live in
 its `workers/`. **`03_sun_wukong/` is the East (Orient)** — the monkey that
 executes, thinks and transforms; the LLM agents live in its `agents/`.
-`core/shirka/` is the neutral engine both camps run on. What is reversible is
+`core/shyrka/` is the neutral engine both camps run on. What is reversible is
 *which provider occupies each camp*, not the nature of a given routine — see
 [`documentation/automates-and-camps.md`](documentation/automates-and-camps.md).
 

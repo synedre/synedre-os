@@ -28,7 +28,7 @@ reversible* — is not abstract. It maps onto the pillars:
 |---|---|---|
 | `02_atlas/` | **West (Occident)** | Validate, schedule, orchestrate. The titan that holds the world and sees everything. |
 | `03_sun_wukong/` | **East (Orient)** | Execute, think, transform. The monkey that acts. |
-| `core/shirka/` | neutral | The engine both camps run on (the agentic loop, the access facades). |
+| `core/shyrka/` | neutral | The engine both camps run on (the agentic loop, the access facades). |
 | `00_ourobouros/`, `01_founder/`, `addons/` | neutral | Memory, business, the merchant frontier. |
 
 - The **automates** are deterministic, reproducible routines — measuring, auditing,

@@ -1,0 +1,21 @@
+# sy_codename_denylist.txt.example — TEMPLATE.
+#
+# Copy this file to sy_codename_denylist.txt (which is gitignored) and fill in
+# YOUR tenant codenames and proper nouns. The real file never ships — your
+# customer list is private (CLAUDE.md Rule 3: no tenant codename in the repo).
+#
+# One token per line. '#' and blank lines are ignored. Matching is substring +
+# case-insensitive (see sy_scrub.scrub_codenames). Tokens are matched
+# longest-first, so list snake_case variants explicitly (e.g. both 'acme_corp'
+# and 'acmecorp'). Substring deliberately — '\b' would let 'acme_v2' slip past
+# '\bacme\b'. Accept false positives over a real leak.
+#
+# The shipped placeholders below are NEUTRAL — replace every line.
+
+# --- tenant codenames (replace with your own) ---
+acme
+acme_corp
+acme_v2
+
+# --- proper nouns (founder, brand, infra names that must not leak) ---
+example_brand

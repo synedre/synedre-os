@@ -1,7 +1,7 @@
 # 🛠️ External tools — inventory & conventions
 
 > The wrappers that drive these tools live in
-> [`core/shirka/tools/`](../core/shirka/tools/) (one subfolder per family). This
+> [`core/shyrka/tools/`](../core/shyrka/tools/) (one subfolder per family). This
 > page is the **inventory**: what is supported, where, and at which open-core
 > tier. Placement rationale: [ADR-0002](adr/0002-external-tools-placement.md).
 
@@ -13,10 +13,10 @@ isolated behind a facade so the rest of the runtime stays tool-agnostic.
 
 | Tool | Family | Wrapper | Skill(s) using it | Install | Tier |
 |---|---|---|---|---|---|
-| Chromium / CDP | `browser/` | `core/shirka/tools/browser/` | QA-capture, browser automation | `02_atlas/infra/` | **free** (engine) |
-| Blender | `three-d/` | `core/shirka/tools/three-d/` | shape-report, character generation | `02_atlas/infra/` | **addon candidate** |
-| Figma API | `figma/` | `core/shirka/tools/figma/` | design intake | `02_atlas/infra/` | **free** (engine) |
-| Headless capture | `screenshot/` | `core/shirka/tools/screenshot/` | several | `02_atlas/infra/` | **free** (engine) |
+| Chromium / CDP | `browser/` | `core/shyrka/tools/browser/` | QA-capture, browser automation | `02_atlas/infra/` | **free** (engine) |
+| Blender | `three-d/` | `core/shyrka/tools/three-d/` | shape-report, character generation | `02_atlas/infra/` | **addon candidate** |
+| Figma API | `figma/` | `core/shyrka/tools/figma/` | design intake | `02_atlas/infra/` | **free** (engine) |
+| Headless capture | `screenshot/` | `core/shyrka/tools/screenshot/` | several | `02_atlas/infra/` | **free** (engine) |
 
 > **Tier meaning.** *free* = part of the AGPL engine, ships in the public distro.
 > *addon candidate* = domain-specific, may ship as a sold addon outside the AGPL
@@ -32,7 +32,7 @@ isolated behind a facade so the rest of the runtime stays tool-agnostic.
    upgrades in one place.
 3. **Fail closed.** A missing or unreachable tool raises a clear error from the
    facade — never a silent no-op. See the facade contract in
-   [`core/shirka/tools/README.md`](../core/shirka/tools/README.md).
+   [`core/shyrka/tools/README.md`](../core/shyrka/tools/README.md).
 4. **No internal names leak.** Wrappers in the public distro must be scrubbed of
    proprietary prefixes, tenant codenames and absolute paths — the same rule as
    everywhere (CLAUDE.md Rule 3). A wrapper that references an internal host or a
@@ -40,7 +40,7 @@ isolated behind a facade so the rest of the runtime stays tool-agnostic.
 
 ## Adding a new tool
 
-1. Create `core/shirka/tools/<family>/` and the facade `sy_<tool>_<role>.py`.
+1. Create `core/shyrka/tools/<family>/` and the facade `sy_<tool>_<role>.py`.
 2. Pin the install in `02_atlas/infra/`.
 3. Add a row to the inventory table above (tool, family, wrapper, skills, install, tier).
 4. If a skill will use it, write the skill in `03_sun_wukong/skills/` following

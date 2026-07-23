@@ -28,7 +28,7 @@ public distro:
 ## Decision
 
 We gather every wrapper that drives an external tool under
-**`core/shirka/tools/`**, organized **one subfolder per family**
+**`core/shyrka/tools/`**, organized **one subfolder per family**
 (`browser/`, `three-d/`, `figma/`, `screenshot/`), with facades named
 `sy_<tool>_<role>.py`.
 
@@ -59,7 +59,7 @@ of supported tools lives in [`documentation/external-tools.md`](../external-tool
 
 ## Alternatives considered
 
-- **Flat in `core/shirka/`, as the monolith does in its facade folder.** Rejected:
+- **Flat in `core/shyrka/`, as the monolith does in its facade folder.** Rejected:
   the monolith's flat scatter of pilots among business facades is exactly the
   non-discoverability we are correcting. Grouping by family is cheap and clear.
 - **A single `tools.py` module.** Rejected: the tools are heterogeneous (a CLI
@@ -73,7 +73,7 @@ of supported tools lives in [`documentation/external-tools.md`](../external-tool
 ## Links
 
 - [`../external-tools.md`](../external-tools.md) — the inventory.
-- [`../../core/shirka/tools/README.md`](../../core/shirka/tools/README.md) — the
+- [`../../core/shyrka/tools/README.md`](../../core/shyrka/tools/README.md) — the
   facade contract.
 - [ADR-0003](0003-automates-camps-and-castes.md) — automates, camps and castes
   (the other half of the placement doctrine).

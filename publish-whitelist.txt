@@ -1,0 +1,35 @@
+# publish-whitelist.txt — map of source (monolith) -> dest (OSS repo).
+#
+# Doctrine cicatrice #618 / doc-doctrine §3: the release writer copies ONLY the
+# files listed here, then scrubs them. Never `cp -r` a directory then scrub it —
+# the whitelist drives inclusion. The leak gate then checks the staged output
+# regardless (defense in depth), and publishing is never autonomous.
+#
+# Format:   <source-relative-to-SY_SRC_ROOT> -> <dest-relative-to-SY_DEST_ROOT>
+# Lines starting with '#' are ignored. A line with no '->' is a comment/section.
+
+# === Core engine facades (core/shyrka) ===
+synedre/db.py                          ->  core/shyrka/sy_db.py
+synedre/ac_env.py                      ->  core/shyrka/sy_env.py
+
+# === West workers — SRE guards (02_atlas/workers) ===
+synedre/ac_pg_contract.py              ->  02_atlas/workers/sy_pg_contract.py
+synedre/ac_session_split.py            ->  02_atlas/workers/sre/sy_session_split.py
+synedre/ac_session_handoff_resume.py   ->  02_atlas/workers/sre/sy_session_handoff_resume.py
+
+# === West hooks — git domain (02_atlas/hooks/git) ===
+scripts/hook-no-rebase-on-shared-branch.sh    ->  02_atlas/hooks/git/sy_no_rebase_on_shared_branch.sh
+scripts/hook-gitleaks-scan.sh                 ->  02_atlas/hooks/git/sy_gitleaks_scan.sh
+scripts/hook-pre-commit-transcript-scan.sh    ->  02_atlas/hooks/git/sy_pre_commit_transcript_scan.sh
+scripts/hook-sql-escape-roundtrip.sh          ->  02_atlas/hooks/git/sy_sql_escape_roundtrip.sh
+scripts/hook-psql-stdin-not-argv-block.sh     ->  02_atlas/hooks/git/sy_psql_stdin_not_argv_block.sh
+
+# === West hooks — claude session domain (02_atlas/hooks/claude) ===
+scripts/hook-inline-secret-paste-block.sh     ->  02_atlas/hooks/claude/sy_inline_secret_paste_block.sh
+scripts/hook-stop-uncommitted-warn.sh         ->  02_atlas/hooks/claude/sy_stop_uncommitted_warn.sh
+scripts/hook-cron-llm-block.sh                ->  02_atlas/hooks/claude/sy_cron_llm_block.sh
+
+# === EXPLICITLY EXCLUDED (kept here as memory, not copied) ===
+# synedre/ac_session_start.py, ac_logger, ac_healthcheck, ac_entities/  -> T3.3 (coupled facades)
+# bootstrap.sql, vaisseau_mere_ac hardcoded schema                       -> T3.2
+# core/shyrka/brain/                                                     -> private moat, gitignored
