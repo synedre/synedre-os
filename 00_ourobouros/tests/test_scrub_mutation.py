@@ -113,6 +113,25 @@ MUTANTS = [
     ("private_ref_claudemd",
      '# see local CLAUDE.md for the rule\n',
      ["CLAUDE.md"], []),
+    # pg_dump 16 boilerplate — banner / \restrict nonce / SET block / set_config
+    # / version metadata are stripped. The nonce is an ephemeral token that must
+    # never ship. A codename (acme) + schema token ride along so the gate still
+    # detects the RAW dump — the gate knows nothing of '\restrict'.
+    ("pg_dump_artifacts",
+     '--\n-- PostgreSQL database dump\n--\n'
+     '\\restrict testnonceforpgdumpnotreal\n'
+     'SET statement_timeout = 0;\n'
+     'SET row_security = off;\n'
+     "SELECT pg_catalog.set_config('search_path', '', false);\n"
+     '-- Dumped from database version 16.13\n'
+     'CREATE TABLE mothership_db.acme_cfg (\n'
+     '    k text NOT NULL\n'
+     ');\n'
+     '--\n-- PostgreSQL database dump complete\n--\n',
+     ["\\restrict", "testnonceforpgdumpnotreal", "PostgreSQL database dump",
+      "SET statement_timeout", "set_config", "Dumped from database version",
+      "row_security", "acme", "mothership_db"],
+     ["shyrka", "<TENANT>"]),
 ]
 
 _IDS = [m[0] for m in MUTANTS]

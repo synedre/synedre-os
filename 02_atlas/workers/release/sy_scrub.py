@@ -21,8 +21,14 @@ Transforms (order matters — see scrub_text):
      '\\bpalimex\\b'.
   4. relativize absolute paths  (/home/ubuntu/synedre-os -> ${SYNEDRE_ROOT},
      then /home/ubuntu -> ${HOME}). SYNEDRE_ROOT before HOME.
-  5. rename proprietary prefixes (ps_ac_ -> sy_ BEFORE ac_ -> sy_; kebab
+  5. rename schema vocabulary   (vaisseau_mere_ac / vaisseau_mere /
+     mother_ship / mothership -> shyrka), everywhere incl. comments. Documented
+     at PUBLIC_SCHEMA; a separate pass because '_ac' suffix evades prefixes.
+  6. rename proprietary prefixes (ps_ac_ -> sy_ BEFORE ac_ -> sy_; kebab
      ac- -> sy-). Lookbehind keeps mid-word 'ac' (mac_os) intact.
+  7. strip pg_dump artifacts    (banner / \\restrict nonce / version lines /
+     SET block / set_config) — pg_dump 16 boilerplate; the \\restrict nonce is
+     an ephemeral token that must never ship. Line-anchored, no-op on prose.
 
 Scope: structure, not secrets. Secrets are NOT scrubbed here — they must FAIL at
 the gate and demand human action, never be silently redacted into a publish.
@@ -192,6 +198,51 @@ def rename_prefixes(text: str) -> str:
     return text
 
 
+# ---- 6. pg_dump artifacts ---------------------------------------------------
+# pg_dump 16 prefixes every dump with session boilerplate (a block of SET
+# statements + a set_config search_path call), a banner, version metadata and a
+# \\restrict <token> line. The \\restrict token is a dump-integrity nonce (PG
+# 17+/the --restrict flag) — an ephemeral, secret-ish value that must NEVER ship.
+# The rest is tooling noise. None of it belongs in a published bootstrap.sql.
+# The regexes are line-anchored and specific (e.g. 'SET <snake_var> = ...;'), so
+# they are a no-op on prose or code that merely happens to contain the word SET.
+_PG_DUMP_BANNER_RE = re.compile(
+    r"^--[^\n]*\n--\s*PostgreSQL database dump(?:\s+complete)?\s*\n--[^\n]*\n",
+    re.MULTILINE,
+)
+_RESTRICT_TOKEN_RE = re.compile(
+    r"^\\(?:un)?restrict\s+\S+\s*\n", re.MULTILINE,
+)
+_DUMP_VERSION_RE = re.compile(
+    r"^--\s*Dumped (?:from|by) (?:database|pg_dump) version[^\n]*\n",
+    re.MULTILINE,
+)
+_PG_SET_RE = re.compile(
+    r"^SET\s+[a-z_]+\s*=\s*[^;\n]*;\n", re.MULTILINE,
+)
+_PG_SET_CONFIG_RE = re.compile(
+    r"^SELECT\s+pg_catalog\.set_config\([^;\n]*\);\n", re.MULTILINE | re.IGNORECASE,
+)
+
+
+def strip_pg_dump_artifacts(text: str) -> str:
+    """Drop pg_dump 16 boilerplate: the 'PostgreSQL database dump' banner, the
+    \\restrict/\\unrestrict integrity nonce, the version-metadata lines, the
+    block of SET statements and the set_config search_path call.
+
+    These are tooling noise in a published bootstrap.sql, and the \\restrict
+    nonce is an ephemeral token that must never ship. Line-anchored and specific
+    (a SET must read 'SET <snake_var> = <value>;'), so normal prose/code that
+    merely contains the word 'SET' is untouched.
+    """
+    text = _PG_DUMP_BANNER_RE.sub("", text)
+    text = _RESTRICT_TOKEN_RE.sub("", text)
+    text = _DUMP_VERSION_RE.sub("", text)
+    text = _PG_SET_RE.sub("", text)
+    text = _PG_SET_CONFIG_RE.sub("", text)
+    return text
+
+
 # ---- orchestration ----------------------------------------------------------
 def scrub_text(text, denylist=None, *, path_map=None, schema_tokens=None) -> str:
     """Apply all transforms in order. denylist=None skips codenames. path_map /
@@ -204,6 +255,7 @@ def scrub_text(text, denylist=None, *, path_map=None, schema_tokens=None) -> str
     text = relativize_paths(text, path_map)
     text = scrub_schema_namespace(text, schema_tokens)
     text = rename_prefixes(text)
+    text = strip_pg_dump_artifacts(text)
     return text
 
 
