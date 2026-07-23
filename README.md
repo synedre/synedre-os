@@ -39,8 +39,15 @@ The moat is what the system *knows* — not what it *is*.
 
 Guiding principle: **execution and validation are separated — and the roles are
 reversible.** Whichever camp produces, the other validates; never does a camp
-validate its own work, in either direction. The East may execute while the West
-judges, and the inverse is equally true.
+validate its own work, in either direction.
+
+The camps map to the pillars: **`02_atlas/` is the West (Occident)** — the titan
+that validates, schedules and orchestrates; the deterministic automates live in
+its `workers/`. **`03_sun_wukong/` is the East (Orient)** — the monkey that
+executes, thinks and transforms; the LLM agents live in its `agents/`.
+`core/shirka/` is the neutral engine both camps run on. What is reversible is
+*which provider occupies each camp*, not the nature of a given routine — see
+[`documentation/automates-and-camps.md`](documentation/automates-and-camps.md).
 
 ## 3. Multi-brain
 
