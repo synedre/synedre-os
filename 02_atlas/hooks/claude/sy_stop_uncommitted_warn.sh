@@ -1,45 +1,45 @@
 #!/usr/bin/env bash
-# hook-stop-uncommitted-warn.sh — événement Stop
+# hook-stop-uncommitted-warn.sh — Stop event
 #
-# BLOQUANT : si la worktree git contient des changes non-committés à la fin
-# d'une session, refuse le Stop et force Claude à commiter. Applique la
-# doctrine  « Commit en flux » : aucun work_order terminé ne reste
+# BLOCKING: if the git worktree contains uncommitted changes at the end
+# of a session, refuse the Stop and force Claude to commit. Enforces the
+# "Commit in flow" doctrine: no finished work_order stays
 # uncommitted.
 #
-# Session-aware (depuis 2026-05-21) : si la session a un fichier de tracking
-# `.claude/session-<id>-edited.txt` (alimenté par hook-track-session-edits.py
-# sur PostToolUse Edit|Write|MultiEdit|NotebookEdit), on filtre le dirty
-# list pour ne garder que les fichiers DE CETTE SESSION. Permet le
-# parallélisme multi-sessions Claude sans blocage croisé.
+# Session-aware (since 2026-05-21): if the session has a tracking file
+# `.claude/session-<id>-edited.txt` (fed by hook-track-session-edits.py
+# on PostToolUse Edit|Write|MultiEdit|NotebookEdit), the dirty list is
+# filtered to keep only the files OF THIS SESSION. Enables Claude
+# multi-session parallelism without cross-blocking.
 #
-# Garde-fou anti-boucle : si stop_hook_active=true (le hook a déjà bloqué
-# une fois et Claude a re-demandé Stop), on laisse passer en warning. Sinon
-# Claude pourrait être piégé en boucle s'il ne peut pas commiter.
+# Anti-loop guard: if stop_hook_active=true (the hook already blocked
+# once and Claude requested Stop again), let it pass as a warning. Otherwise
+# Claude could be trapped in a loop if it cannot commit.
 #
-# Exclusion : .claude/settings.json modifié pendant la session (le hook
-# lui-même peut avoir édité ce fichier).
+# Exclusion: .claude/settings.json modified during the session (the hook
+# itself may have edited this file).
 #
-# Sortie :
-#   - clean OR pas de fichier MIEN dirty → exit 0 silencieux
-#   - dirty MIEN + 1ère passe → JSON {"decision":"block","reason":"..."} (bloque)
-#   - dirty MIEN + 2e passe   → JSON {"systemMessage":"..."} (warn non-bloquant)
+# Output:
+#   - clean OR no dirty file of MINE -> silent exit 0
+#   - dirty MINE + 1st pass -> JSON {"decision":"block","reason":"..."} (blocks)
+#   - dirty MINE + 2nd pass -> JSON {"systemMessage":"..."} (non-blocking warn)
 
 set -uo pipefail
 cd ${SYNEDRE_ROOT} 2>/dev/null || exit 0
 
-# Worker context early-return : si ce hook est déclenché dans un sous-claude
-# spawné par sy_task_worker.py (SY_WORKER_CONTEXT=sy_task_worker injecté par
-# atlas-spawn-claude.mjs, commit Brunel #421), on sort silencieusement.
-# Le worker gère lui-même le cycle commit en fin de run — le sous-claude ne
-# doit pas commiter (doctrine commit-en-flux réservée aux sessions utilisateur).
-# Scar 2026-05-23 #3 (jobsite #94) : sans ce guard, 100+ events hook_*
-# identiques bloquaient le sous-claude sans rien produire.
+# Worker context early-return: if this hook fires inside a sub-claude
+# spawned by sy_task_worker.py (SY_WORKER_CONTEXT=sy_task_worker injected by
+# atlas-spawn-claude.mjs, Brunel commit #421), exit silently.
+# The worker handles the commit cycle itself at end of run — the sub-claude
+# must not commit (commit-in-flow doctrine reserved for user sessions).
+# Scar 2026-05-23 #3 (jobsite #94): without this guard, 100+ identical hook_*
+# events blocked the sub-claude without producing anything.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/is-worker-context.sh
 source "${SCRIPT_DIR}/lib/is-worker-context.sh" 2>/dev/null || true
 is_worker_context && exit 0
 
-# Lecture stdin (Claude Code envoie {"stop_hook_active": bool, "session_id": "...", ...})
+# Read stdin (Claude Code sends {"stop_hook_active": bool, "session_id": "...", ...})
 stdin_raw=$(cat 2>/dev/null || true)
 
 stop_hook_active=$(printf '%s' "$stdin_raw" | python3 -c '
@@ -66,14 +66,14 @@ if [ -z "$dirty" ]; then
   exit 0
 fi
 
-# Filtre session-aware : si fichier de tracking existe, ne garder que les
-# fichiers édités PAR CETTE SESSION (les autres = WIP d'une session sœur).
+# Session-aware filter: if the tracking file exists, keep only the files
+# edited BY THIS SESSION (the others = WIP from a sibling session).
 #
-# Cas zéro-édition (scar 2026-05-27) : une session trackée qui n'a fait
-# AUCUN Edit/Write (work_order 100% DB / lecture) n'a pas de log d'édition. Sans
-# guard, le test `[ -f "$edited_log" ]` était faux, le filtre shunté, et la
-# session héritait du dirty GLOBAL (WIP des sessions sœurs partageant la même
-# worktree) → faux blocage. Pas de log = zéro fichier à elle → on sort.
+# Zero-edit case (scar 2026-05-27): a tracked session that did
+# NO Edit/Write (work_order 100% DB / read-only) has no edit log. Without a
+# guard, the `[ -f "$edited_log" ]` test was false, the filter bypassed, and the
+# session inherited the GLOBAL dirty state (WIP of sibling sessions sharing the
+# same worktree) -> false block. No log = zero files of its own -> exit.
 edited_log=".claude/session-${session_id}-edited.txt"
 if [ -n "$session_id" ]; then
  if [ -f "$edited_log" ]; then
@@ -86,12 +86,12 @@ for line in sys.stdin:
     line = line.rstrip()
     if not line:
         continue
-    # Format porcelain : 'XY path' ou '?? path', path peut être quoté si espaces
+    # Porcelain format: 'XY path' or '?? path', path may be quoted if it has spaces
     parts = line.split(None, 1)
     if len(parts) < 2:
         continue
     path = parts[1].strip().strip('\"')
-    # Pour les renames 'R  old -> new', on prend le new
+    # For renames 'R  old -> new', take the new one
     if ' -> ' in path:
         path = path.split(' -> ', 1)[1].strip().strip('\"')
     if path in tracked:
@@ -99,32 +99,32 @@ for line in sys.stdin:
 print('\n'.join(out))
 " 2>/dev/null || printf '%s' "$dirty")
  else
-  # Session trackée sans log d'édition = zéro Edit/Write ce run → aucun
-  # fichier ne lui appartient. Ne pas hériter du WIP des sessions sœurs.
+  # Tracked session with no edit log = zero Edit/Write this run -> no
+  # file belongs to it. Do not inherit the WIP of sibling sessions.
   dirty=""
  fi
  if [ -z "$dirty" ]; then
-   # Worktree dirty mais aucun fichier de ma session → OK, autres sessions
-   # ont du WIP qui n'est pas mon problème.
+   # Worktree dirty but no file from my session -> OK, other sessions
+   # have WIP that is not my problem.
    exit 0
  fi
 fi
 
-# Échapper pour JSON (newlines → \n, quotes → \")
+# Escape for JSON (newlines -> \n, quotes -> \")
 escaped=$(printf '%s' "$dirty" | python3 -c 'import sys, json; print(json.dumps(sys.stdin.read()))')
-# escaped contient les guillemets englobants ; les retirer pour interpolation
+# escaped contains the enclosing double quotes; strip them for interpolation
 inner=${escaped:1:-1}
 
 if [ "$stop_hook_active" = "true" ]; then
-  # 2e passage : ne pas re-bloquer (anti-boucle infinie). Warn seulement.
+  # 2nd pass: do not re-block (anti infinite-loop). Warn only.
   cat <<EOF
-{"systemMessage": "⚠️  Stop forcé alors que worktree dirty (anti-boucle) :\n${inner}\nCommiter manuellement à la prochaine session."}
+{"systemMessage": "⚠️  Stop forced while worktree is dirty (anti-loop):\n${inner}\nCommit manually in the next session."}
 EOF
   exit 0
 fi
 
-# 1ère passe : BLOQUE le Stop et instruit Claude de commiter
+# 1st pass: BLOCK the Stop and instruct Claude to commit
 cat <<EOF
-{"decision": "block", "reason": "Doctrine  « Commit en flux » : work_order non-committé interdit en fin de session.\n\nFichiers dirty (de cette session) :\n${inner}\n\nAction requise : commiter (1 jobsite = 1 commit cohérent) PUIS rendre la main. Si la worktree contient du WIP volontaire, le déclarer explicitement dans la réponse avant Stop."}
+{"decision": "block", "reason": "'Commit in flow' doctrine: uncommitted work_order is forbidden at end of session.\n\nDirty files (of this session):\n${inner}\n\nRequired action: commit (1 jobsite = 1 coherent commit) THEN yield. If the worktree contains intentional WIP, declare it explicitly in the response before Stop."}
 EOF
 exit 0

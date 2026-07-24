@@ -1,0 +1,510 @@
+[
+ [
+  "#\n# hook-cron-llm-block.sh — Hook PreToolUse Bash BLOQUANT (LLM en cron = drain forfait).\n#\n# Matérialise la doctrine  (jobsite #506,\n# session anti-drain du 2026-07-19). Un script qui consomme du LLM (claude -p /\n# sy_ai_provider.complete / invoke_agent / spawn node-pty) enregistré en crontab\n# draine le forfait Claude EN SILENCE : le coût est invisible jusqu'au plafond\n# hebdomadaire. Le déclencheur du 2026-07-19 : sy_jobsite_readiness_audit --enrich\n# balayait TOUT le backlog toutes les 20 min via claude -p. Retiré et passé en\n# on-demand (--only) le jour même — ce hook empêche la RÉINTRODUCTION.\n#\n# RÈGLE : un script LLM ne s'installe pas en cron. Le LLM interne s'appelle À LA\n# DEMANDE (au moment où on en a besoin), jamais sur une horloge.\n#\n# DÉTECTION : la commande installe un crontab (`crontab -`, `crontab <fichier>`,\n# `crontab -e`, `… | crontab -`) ET une de ses lignes cron NON commentée invoque\n# un script qui (analyse STATIQUE du fichier résolu) appelle un LLM, OU contient\n# un `claude -p` en dur. Le parseur de lignes cron est calqué sur\n# hook-cron-relative-path-block.sh (même squelette, pas de second parseur divergent).\n#\n# MOTEUR PARTAGÉ — 1 doctrine = 1 hook ().\n# La logique de détection vit inline historiquement ; elle est extraite dans\n# synedre/sy_cron_llm_detector.py (2026-07-21), module partagé avec la sentinelle\n# sy_audit_cron_llm.py. Ce hook n'est plus qu'un fin wrapper Bash : il extrait la\n# commande du payload, la passe au module, et bloque sur la 1ère violation.\n# Les deux gardes ne peuvent pas diverger ().\n#\n# PORTES DE SORTIE conscientes (gérées par le module) :\n#   1. Allow-list nominative : synedre/config/cron_llm_allowlist.yaml (défaut vide).\n#   2. Marqueur en fin de ligne cron : `# cron-llm:allow <raison>`.\n#\n# FAIL-OPEN : payload/parse KO → exit 0. Blocage (exit 2) sur match LLM CERTAIN.\n# Un garde-fou qui casse tout se fait désactiver — on ne bloque que le sûr.\n",
+  "#\n# hook-cron-llm-block.sh — BLOCKING PreToolUse Bash hook (LLM in cron = plan drain).\n#\n# Materializes the doctrine  (jobsite #506,\n# anti-drain session of 2026-07-19). A script that consumes LLM (claude -p /\n# sy_ai_provider.complete / invoke_agent / spawn node-pty) registered in crontab\n# drains the Claude plan SILENTLY: the cost is invisible until the weekly\n# cap. The 2026-07-19 trigger: sy_jobsite_readiness_audit --enrich\n# swept the ENTIRE backlog every 20 min via claude -p. Removed and switched to\n# on-demand (--only) the same day — this hook prevents its REINTRODUCTION.\n#\n# RULE: an LLM script is never installed in cron. The internal LLM is called ON\n# DEMAND (at the moment it is needed), never on a clock.\n#\n# DETECTION: the command installs a crontab (`crontab -`, `crontab <file>`,\n# `crontab -e`, `… | crontab -`) AND one of its non-commented cron lines invokes\n# a script that (STATIC analysis of the resolved file) calls an LLM, OR contains\n# a hardcoded `claude -p`. The cron line parser mirrors\n# hook-cron-relative-path-block.sh (same skeleton, no second diverging parser).\n#\n# SHARED ENGINE — 1 doctrine = 1 hook ().\n# The detection logic historically lived inline; it was extracted into\n# synedre/sy_cron_llm_detector.py (2026-07-21), a module shared with the\n# sy_audit_cron_llm.py sentinel. This hook is now just a thin Bash wrapper: it\n# extracts the command from the payload, passes it to the module, and blocks on\n# the 1st violation. The two guards cannot diverge ().\n#\n# Conscious EXIT DOORS (handled by the module):\n#   1. Nominative allow-list: synedre/config/cron_llm_allowlist.yaml (empty by default).\n#   2. End-of-cron-line marker: `# cron-llm:allow <reason>`.\n#\n# FAIL-OPEN: payload/parse KO -> exit 0. Block (exit 2) on a CERTAIN LLM match.\n# A safety guard that breaks everything gets disabled — only block what is certain.\n"
+ ],
+ [
+  "# Overridable pour les tests (défaut = repo live canonique).\n",
+  "# Overridable for tests (default = canonical live repo).\n"
+ ],
+ [
+  "# Ne se déclenche que si la commande a affaire au crontab.\n",
+  "# Only fires if the command deals with crontab.\n"
+ ],
+ [
+  "# Lecture seule (`crontab -l` sans installation) → laisser passer.\n",
+  "# Read-only (`crontab -l` without installing) -> let it pass.\n"
+ ],
+ [
+  "# Délègue la détection au moteur partagé. Format : KIND|stem|path|line\n# (stem/path vides pour CLAUDE_P_INLINE). Fail-open : tout échec → vide → exit 0.\n",
+  "# Delegate detection to the shared engine. Format: KIND|stem|path|line\n# (stem/path empty for CLAUDE_P_INLINE). Fail-open: any failure -> empty -> exit 0.\n"
+ ],
+ [
+  "if v:  # le hook ne veut que la 1ère ; la sentinelle prend les autres\n",
+  "if v:  # the hook only wants the 1st one; the sentinel takes the others\n"
+ ],
+ [
+  "    DETAIL=\"Cette ligne appelle \\`claude -p\\` DIRECTEMENT.\"\n",
+  "    DETAIL=\"This line calls \\`claude -p\\` DIRECTLY.\"\n"
+ ],
+ [
+  "    DETAIL=\"Le script invoqué \\`${STEM}\\` consomme du LLM (analyse statique de ${SPATH}).\"\n    WHICH=\"  Script fautif : ${SPATH}\"\n",
+  "    DETAIL=\"The invoked script \\`${STEM}\\` consumes LLM (static analysis of ${SPATH}).\"\n    WHICH=\"  Offending script: ${SPATH}\"\n"
+ ],
+ [
+  "BLOQUÉ — installation d'un script LLM en cron (drain silencieux du forfait)\n\n  Ligne de cron fautive :\n    ${LINE}\n\n  ${DETAIL}\n${WHICH}\n\n  POURQUOI C'EST BLOQUÉ : un LLM récurrent en crontab draine le forfait Claude\n  EN SILENCE — le coût n'apparaît nulle part avant le plafond hebdomadaire. Le\n  2026-07-19, sy_jobsite_readiness_audit --enrich balayait TOUT le backlog via\n  claude -p toutes les 20 min. La règle depuis : le LLM interne s'appelle À LA\n  DEMANDE (au moment d'en avoir besoin), jamais sur une horloge.\n\n  CE QU'IL FAUT FAIRE :\n    • Rends l'appel LLM ON-DEMAND (ex : readiness_audit --only <codename> lancé\n      au moment où on veut armer un jobsite, pas en cron).\n    • OU garde en cron la partie DÉTERMINISTE seulement (verdict/scan sans LLM).\n\n  SI C'EST VRAIMENT UN CHOIX CONSCIENT (ex worker event-driven qui no-op quand\n  la queue est vide) :\n    • Ajoute le script à synedre/config/cron_llm_allowlist.yaml (avec sa raison),\n    • OU suffixe la ligne de cron de : # cron-llm:allow <raison>\n\n  Référence :  — 1 doctrine = 1 hook.\n",
+  "BLOCKED — installing an LLM script in cron (silent plan drain)\n\n  Offending cron line:\n    ${LINE}\n\n  ${DETAIL}\n${WHICH}\n\n  WHY THIS IS BLOCKED: a recurring LLM in crontab drains the Claude plan\n  SILENTLY — the cost shows up nowhere until the weekly cap. On\n  2026-07-19, sy_jobsite_readiness_audit --enrich swept the ENTIRE backlog via\n  claude -p every 20 min. The rule since then: the internal LLM is called ON\n  DEMAND (at the moment it is needed), never on a clock.\n\n  WHAT TO DO:\n    - Make the LLM call ON-DEMAND (e.g. readiness_audit --only <codename> run\n      at the moment you want to arm a jobsite, not in cron).\n    - OR keep only the DETERMINISTIC part in cron (verdict/scan without LLM).\n\n  IF THIS IS TRULY A CONSCIOUS CHOICE (e.g. an event-driven worker that no-ops\n  when the queue is empty):\n    - Add the script to synedre/config/cron_llm_allowlist.yaml (with its reason),\n    - OR suffix the cron line with: # cron-llm:allow <reason>\n\n  Reference:  — 1 doctrine = 1 hook.\n"
+ ],
+ [
+  "#\n# hook-inline-secret-paste-block.sh — Hook PreToolUse Bash BLOQUANT (anti-leak inline).\n#\n# Matérialise la doctrine anti-leak secrets ( §\"Anti-leak secrets\" +\n# doctrine des secrets 3 niveaux). Comble une CLASSE de scars récurrente\n# (#890 #827 #821 #774 #739 #735 #721, 7 occurrences P0/P1) : un agent bloqué\n# par un environnement non sourcé (`PG_HOST inaccessible`, `.env pas chargé`)\n# contourne en collant la VALEUR du secret directement dans la commande. Rapide\n# à taper, désastreux pour la rotation des secrets (la valeur fuite dans le\n# transcript, les logs, l'historique).\n#\n# Règle : on ne colle JAMAIS une valeur de secret inline. On source l'env :\n#     set -a && . .env && . .env.host && set +a      puis on référence $VAR.\n#\n# Détection : la VALEUR (pas la référence $VAR, pas `grep ^VAR= .env`) d'une\n# variable à nom sensible (PASS|PASSWORD|SECRET|KEY|TOKEN|PWD|CRED|API...) et de\n# longueur >= 12 apparaît LITTÉRALEMENT (grep -F) dans la commande.\n#\n# Sécurité du hook lui-même : il lit des secrets mais ne les ré-échote JAMAIS —\n# le message d'erreur ne cite QUE le NOM de la variable, jamais sa valeur.\n#\n# Fail-OPEN : toute erreur / parse KO / absence de .env → exit 0 (on ne bloque\n# jamais une commande par accident). Blocage DUR (exit 2) uniquement sur match\n# certain.\n#\n# Périmètre v1 + LIMITES CONNUES (revue Mitnick 2026-07-13, verdict clean-with-notes) :\n#   - Sources : .env + .env.host (origine des 7 scars). Les .env tenant\n#     (codemyshop/tenants/<x>/.env, ~4 actifs : Stripe webhook…) NE sont PAS\n#     couverts en v1 — extension future si récurrence.\n#   - Gating par NOM sensible : une valeur sensible portée par une variable au\n#     nom neutre (ex. chaîne de connexion NUXT_TENANT_DB_*) échappe au radar.\n#   - Détection LITTÉRALE : contournable par encodage (base64/hex) ou split\n#     multi-variables (A=\"ab\"; B=\"cd\"; …$A$B) — hors scope v1, assumé.\n#   - Seuil de longueur = 8 (couvre les mots de passe live courts type\n#     *_HUB_ADMIN_PASSWORD ; en-dessous = trop de faux positifs).\n#   - NE JAMAIS invoquer ce hook sous `bash -x`/`-v` : la trace expanserait $val\n#     (fuite). Le script lui-même ne s'auto-trace pas.\n",
+  "#\n# hook-inline-secret-paste-block.sh — BLOCKING PreToolUse Bash hook (inline anti-leak).\n#\n# Materializes the anti-leak secrets doctrine ( §\"Anti-leak secrets\" +\n# 3-level secrets doctrine). Closes a recurring CLASS of scars\n# (#890 #827 #821 #774 #739 #735 #721, 7 P0/P1 occurrences): an agent blocked\n# by an unsourced environment (`PG_HOST unreachable`, `.env not loaded`)\n# works around it by pasting the secret's VALUE directly into the command. Fast\n# to type, disastrous for secret rotation (the value leaks into the\n# transcript, the logs, the history).\n#\n# Rule: NEVER paste a secret value inline. Source the env:\n#     set -a && . .env && . .env.host && set +a      then reference $VAR.\n#\n# Detection: the VALUE (not the $VAR reference, not `grep ^VAR= .env`) of a\n# variable with a sensitive name (PASS|PASSWORD|SECRET|KEY|TOKEN|PWD|CRED|API...) and\n# length >= 12 appears LITERALLY (grep -F) in the command.\n#\n# Security of the hook itself: it reads secrets but NEVER re-echoes them —\n# the error message cites ONLY the variable NAME, never its value.\n#\n# Fail-OPEN: any error / broken parse / missing .env → exit 0 (we never block\n# a command by accident). HARD block (exit 2) only on a certain match.\n#\n# v1 scope + KNOWN LIMITS (Mitnick review 2026-07-13, verdict clean-with-notes):\n#   - Sources: .env + .env.host (origin of the 7 scars). Tenant .env files\n#     (codemyshop/tenants/<x>/.env, ~4 active: Stripe webhook...) are NOT\n#     covered in v1 — future extension if it recurs.\n#   - Gating by sensitive NAME: a sensitive value carried by a neutrally named\n#     variable (e.g. NUXT_TENANT_DB_* connection string) escapes the radar.\n#   - LITERAL detection: bypassable via encoding (base64/hex) or multi-variable\n#     split (A=\"ab\"; B=\"cd\"; ...$A$B) — out of scope for v1, accepted.\n#   - Length threshold = 8 (covers short live passwords like\n#     *_HUB_ADMIN_PASSWORD; below that = too many false positives).\n#   - NEVER invoke this hook under `bash -x`/`-v`: the trace would expand $val\n#     (leak). The script itself does not self-trace.\n"
+ ],
+ [
+  "# Pas de commande lisible → ne pas gêner (fail-open).\n",
+  "# No readable command → do not get in the way (fail-open).\n"
+ ],
+ [
+  "    # IFS='=' → tout ce qui suit le premier '=' va dans val (valeurs avec '=' OK).\n    # `|| [ -n \"$name\" ]` : SANS ça, la DERNIÈRE ligne d'un fichier sans saut de\n    # ligne final n'est jamais traitée — `read` renvoie faux et `while` sort avant\n    # d'exécuter le corps. Trouvé le 2026-07-17 (jobsite #448) : .env fait 257\n    # lignes dont la 257e, sans newline final, portait FACEBOOK_PASSWD — jamais\n    # protégé. Un secret ajouté en fin de fichier (le geste le plus naturel qui\n    # soit) échappait donc au radar en silence.\n",
+  "    # IFS='=' → everything after the first '=' goes into val (values containing '=' OK).\n    # `|| [ -n \"$name\" ]`: WITHOUT this, the LAST line of a file with no final\n    # newline is never processed — `read` returns false and `while` exits before\n    # running the body. Found on 2026-07-17 (jobsite #448): .env has 257\n    # lines and line 257, with no final newline, carried FACEBOOK_PASSWD — never\n    # protected. A secret added at the end of the file (the most natural gesture\n    # there is) thus silently escaped the radar.\n"
+ ],
+ [
+  "        # Ignore commentaires, lignes vides, exports sans '='.\n",
+  "        # Ignore comments, empty lines, exports without '='.\n"
+ ],
+ [
+  "        # Ne cible que les variables à nom SENSIBLE (réduit les faux positifs).\n",
+  "        # Only target variables with a SENSITIVE name (reduces false positives).\n"
+ ],
+ [
+  "        # …mais une variable d'IDENTIFIANT ne porte pas de secret : un login, un\n        # user, un email, un host ou un port s'écrivent en clair par nature. Le\n        # gate ci-dessus les attrape par accident quand le nom contient \"API\"\n        # (MISTRAL_API_LOGIN, POSTHOG_API_HOST, <TENANT>_<TENANT>_API_USER) — et\n        # MISTRAL_API_LOGIN vaut l'email d'Alex, que  documente lui-même\n        # en clair comme boîte canonique. Résultat : toute phrase citant son\n        # adresse était bloquée. Un secret qui ne peut pas être un secret n'a rien\n        # à faire dans le radar (faux positif constaté 2026-07-17, jobsite #448).\n        # `_ID` N'EST PAS exclu à dessein : AWS_ACCESS_KEY_ID reste armé (prudence\n        # sur les clés AWS — un FP y est rare, un trou serait cher).\n",
+  "        # ...but an IDENTIFIER variable carries no secret: a login, a\n        # user, an email, a host or a port are written in plaintext by nature. The\n        # gate above catches them by accident when the name contains \"API\"\n        # (MISTRAL_API_LOGIN, POSTHOG_API_HOST, <TENANT>_<TENANT>_API_USER) — and\n        # MISTRAL_API_LOGIN holds Alex's email address, which  itself documents\n        # in plaintext as the canonical mailbox. Result: every sentence citing his\n        # address was blocked. A secret that cannot be a secret has no place\n        # in the radar (false positive observed 2026-07-17, jobsite #448).\n        # `_ID` is deliberately NOT excluded: AWS_ACCESS_KEY_ID stays armed (caution\n        # on AWS keys — an FP there is rare, a hole would be costly).\n"
+ ],
+ [
+  "        # Normalise la valeur COMME LE SHELL LA VOIT, pas comme le texte l'écrit.\n        # Trou pré-existant trouvé le 2026-07-17 (jobsite #448) : 14 lignes de\n        # .env/.env.host finissent par un ';' (SMTP_PASS, IMAP_PASSWORD,\n        # N26_PASSWORD, <TENANT>_OVH_PASSWORD, <TENANT>_PASSWD, FACEBOOK_PASSWD…).\n        # Le shell traite ce ';' comme un séparateur de commande et ne le met\n        # JAMAIS dans la valeur ; le hook, lui, le lisait comme le dernier\n        # caractère du secret. Les deux chaînes différaient d'un caractère → le\n        # `grep -F` ci-dessous ne pouvait structurellement JAMAIS matcher, et ces\n        # 14 secrets n'étaient pas protégés du tout. Le hook paraissait armé et ne\n        # mordait pas — même famille que « branché ≠ marche ».\n        # Ordre : espaces de fin → ';' → espaces → déquote (couvre `\"val\" ;`).\n",
+  "        # Normalize the value AS THE SHELL SEES IT, not as the text writes it.\n        # Pre-existing hole found on 2026-07-17 (jobsite #448): 14 lines of\n        # .env/.env.host end with a ';' (SMTP_PASS, IMAP_PASSWORD,\n        # N26_PASSWORD, <TENANT>_OVH_PASSWORD, <TENANT>_PASSWD, FACEBOOK_PASSWD...).\n        # The shell treats that ';' as a command separator and NEVER puts it\n        # in the value; the hook, however, read it as the last character of the\n        # secret. The two strings differed by one character → the\n        # `grep -F` below could structurally NEVER match, and those\n        # 14 secrets were not protected at all. The hook looked armed but did not\n        # bite — same family as \"plugged in != working\".\n        # Order: trailing spaces → ';' → spaces → dequote (covers `\"val\" ;`).\n"
+ ],
+ [
+  "        # Déquote la valeur.\n",
+  "        # Dequote the value.\n"
+ ],
+ [
+  "        # Seuil anti-FP : valeur >= 8 chars, sans espace (couvre les mots de passe\n        # live courts type *_HUB_ADMIN_PASSWORD ; en-dessous = trop de faux positifs).\n",
+  "        # Anti-FP threshold: value >= 8 chars, no spaces (covers short live\n        # passwords like *_HUB_ADMIN_PASSWORD; below that = too many false positives).\n"
+ ],
+ [
+  "        # La VALEUR apparaît-elle littéralement dans la commande ? (fixed-string)\n",
+  "        # Does the VALUE appear literally in the command? (fixed-string)\n"
+ ],
+ [
+  "    # BLOQUE — ne JAMAIS échoter la valeur, seulement le nom de variable.\n",
+  "    # BLOCK — NEVER echo the value, only the variable name.\n"
+ ],
+ [
+  "BLOQUÉ — valeur de secret collée inline (variable : $MATCH_VAR)\n\n  La VALEUR d'un secret apparaît littéralement dans ta commande. Contourner un\n  environnement non sourcé en collant la valeur est INTERDIT : elle fuite dans\n  le transcript, les logs et l'historique, et casse la rotation des secrets\n  (scars #890 #827 #821 #774 #739 #735 #721).\n\n  Ce que tu dois faire — sourcer l'env, puis référencer la VARIABLE :\n    set -a && . $REPO/.env && . $REPO/.env.host && set +a\n    ... \\$$MATCH_VAR ...        # jamais la valeur en clair\n\n  Référence :  §\"Anti-leak secrets\" — 1 doctrine = 1 hook.\n",
+  "BLOCKED — secret value pasted inline (variable: $MATCH_VAR)\n\n  The VALUE of a secret appears literally in your command. Working around an\n  unsourced environment by pasting the value is FORBIDDEN: it leaks into the\n  transcript, the logs and the history, and breaks secret rotation\n  (scars #890 #827 #821 #774 #739 #735 #721).\n\n  What you must do — source the env, then reference the VARIABLE:\n    set -a && . $REPO/.env && . $REPO/.env.host && set +a\n    ... \\$$MATCH_VAR ...        # never the plaintext value\n\n  Reference:  §\"Anti-leak secrets\" — 1 doctrine = 1 hook.\n"
+ ],
+ [
+  "# hook-stop-uncommitted-warn.sh — événement Stop\n#\n# BLOQUANT : si la worktree git contient des changes non-committés à la fin\n# d'une session, refuse le Stop et force Claude à commiter. Applique la\n# doctrine  « Commit en flux » : aucun work_order terminé ne reste\n# uncommitted.\n#\n# Session-aware (depuis 2026-05-21) : si la session a un fichier de tracking\n# `.claude/session-<id>-edited.txt` (alimenté par hook-track-session-edits.py\n# sur PostToolUse Edit|Write|MultiEdit|NotebookEdit), on filtre le dirty\n# list pour ne garder que les fichiers DE CETTE SESSION. Permet le\n# parallélisme multi-sessions Claude sans blocage croisé.\n#\n# Garde-fou anti-boucle : si stop_hook_active=true (le hook a déjà bloqué\n# une fois et Claude a re-demandé Stop), on laisse passer en warning. Sinon\n# Claude pourrait être piégé en boucle s'il ne peut pas commiter.\n#\n# Exclusion : .claude/settings.json modifié pendant la session (le hook\n# lui-même peut avoir édité ce fichier).\n#\n# Sortie :\n#   - clean OR pas de fichier MIEN dirty → exit 0 silencieux\n#   - dirty MIEN + 1ère passe → JSON {\"decision\":\"block\",\"reason\":\"...\"} (bloque)\n#   - dirty MIEN + 2e passe   → JSON {\"systemMessage\":\"...\"} (warn non-bloquant)\n",
+  "# hook-stop-uncommitted-warn.sh — Stop event\n#\n# BLOCKING: if the git worktree contains uncommitted changes at the end\n# of a session, refuse the Stop and force Claude to commit. Enforces the\n# \"Commit in flow\" doctrine: no finished work_order stays\n# uncommitted.\n#\n# Session-aware (since 2026-05-21): if the session has a tracking file\n# `.claude/session-<id>-edited.txt` (fed by hook-track-session-edits.py\n# on PostToolUse Edit|Write|MultiEdit|NotebookEdit), the dirty list is\n# filtered to keep only the files OF THIS SESSION. Enables Claude\n# multi-session parallelism without cross-blocking.\n#\n# Anti-loop guard: if stop_hook_active=true (the hook already blocked\n# once and Claude requested Stop again), let it pass as a warning. Otherwise\n# Claude could be trapped in a loop if it cannot commit.\n#\n# Exclusion: .claude/settings.json modified during the session (the hook\n# itself may have edited this file).\n#\n# Output:\n#   - clean OR no dirty file of MINE -> silent exit 0\n#   - dirty MINE + 1st pass -> JSON {\"decision\":\"block\",\"reason\":\"...\"} (blocks)\n#   - dirty MINE + 2nd pass -> JSON {\"systemMessage\":\"...\"} (non-blocking warn)\n"
+ ],
+ [
+  "# Worker context early-return : si ce hook est déclenché dans un sous-claude\n# spawné par sy_task_worker.py (SY_WORKER_CONTEXT=sy_task_worker injecté par\n# atlas-spawn-claude.mjs, commit Brunel #421), on sort silencieusement.\n# Le worker gère lui-même le cycle commit en fin de run — le sous-claude ne\n# doit pas commiter (doctrine commit-en-flux réservée aux sessions utilisateur).\n# Scar 2026-05-23 #3 (jobsite #94) : sans ce guard, 100+ events hook_*\n# identiques bloquaient le sous-claude sans rien produire.\n",
+  "# Worker context early-return: if this hook fires inside a sub-claude\n# spawned by sy_task_worker.py (SY_WORKER_CONTEXT=sy_task_worker injected by\n# atlas-spawn-claude.mjs, Brunel commit #421), exit silently.\n# The worker handles the commit cycle itself at end of run — the sub-claude\n# must not commit (commit-in-flow doctrine reserved for user sessions).\n# Scar 2026-05-23 #3 (jobsite #94): without this guard, 100+ identical hook_*\n# events blocked the sub-claude without producing anything.\n"
+ ],
+ [
+  "# Lecture stdin (Claude Code envoie {\"stop_hook_active\": bool, \"session_id\": \"...\", ...})\n",
+  "# Read stdin (Claude Code sends {\"stop_hook_active\": bool, \"session_id\": \"...\", ...})\n"
+ ],
+ [
+  "# Filtre session-aware : si fichier de tracking existe, ne garder que les\n# fichiers édités PAR CETTE SESSION (les autres = WIP d'une session sœur).\n#\n# Cas zéro-édition (scar 2026-05-27) : une session trackée qui n'a fait\n# AUCUN Edit/Write (work_order 100% DB / lecture) n'a pas de log d'édition. Sans\n# guard, le test `[ -f \"$edited_log\" ]` était faux, le filtre shunté, et la\n# session héritait du dirty GLOBAL (WIP des sessions sœurs partageant la même\n# worktree) → faux blocage. Pas de log = zéro fichier à elle → on sort.\n",
+  "# Session-aware filter: if the tracking file exists, keep only the files\n# edited BY THIS SESSION (the others = WIP from a sibling session).\n#\n# Zero-edit case (scar 2026-05-27): a tracked session that did\n# NO Edit/Write (work_order 100% DB / read-only) has no edit log. Without a\n# guard, the `[ -f \"$edited_log\" ]` test was false, the filter bypassed, and the\n# session inherited the GLOBAL dirty state (WIP of sibling sessions sharing the\n# same worktree) -> false block. No log = zero files of its own -> exit.\n"
+ ],
+ [
+  "    # Format porcelain : 'XY path' ou '?? path', path peut être quoté si espaces\n",
+  "    # Porcelain format: 'XY path' or '?? path', path may be quoted if it has spaces\n"
+ ],
+ [
+  "    # Pour les renames 'R  old -> new', on prend le new\n",
+  "    # For renames 'R  old -> new', take the new one\n"
+ ],
+ [
+  "  # Session trackée sans log d'édition = zéro Edit/Write ce run → aucun\n  # fichier ne lui appartient. Ne pas hériter du WIP des sessions sœurs.\n",
+  "  # Tracked session with no edit log = zero Edit/Write this run -> no\n  # file belongs to it. Do not inherit the WIP of sibling sessions.\n"
+ ],
+ [
+  "   # Worktree dirty mais aucun fichier de ma session → OK, autres sessions\n   # ont du WIP qui n'est pas mon problème.\n",
+  "   # Worktree dirty but no file from my session -> OK, other sessions\n   # have WIP that is not my problem.\n"
+ ],
+ [
+  "# Échapper pour JSON (newlines → \\n, quotes → \\\")\n",
+  "# Escape for JSON (newlines -> \\n, quotes -> \\\")\n"
+ ],
+ [
+  "# escaped contient les guillemets englobants ; les retirer pour interpolation\n",
+  "# escaped contains the enclosing double quotes; strip them for interpolation\n"
+ ],
+ [
+  "  # 2e passage : ne pas re-bloquer (anti-boucle infinie). Warn seulement.\n",
+  "  # 2nd pass: do not re-block (anti infinite-loop). Warn only.\n"
+ ],
+ [
+  "{\"systemMessage\": \"⚠️  Stop forcé alors que worktree dirty (anti-boucle) :\\n${inner}\\nCommiter manuellement à la prochaine session.\"}\n",
+  "{\"systemMessage\": \"⚠️  Stop forced while worktree is dirty (anti-loop):\\n${inner}\\nCommit manually in the next session.\"}\n"
+ ],
+ [
+  "# 1ère passe : BLOQUE le Stop et instruit Claude de commiter\n",
+  "# 1st pass: BLOCK the Stop and instruct Claude to commit\n"
+ ],
+ [
+  "{\"decision\": \"block\", \"reason\": \"Doctrine  « Commit en flux » : work_order non-committé interdit en fin de session.\\n\\nFichiers dirty (de cette session) :\\n${inner}\\n\\nAction requise : commiter (1 jobsite = 1 commit cohérent) PUIS rendre la main. Si la worktree contient du WIP volontaire, le déclarer explicitement dans la réponse avant Stop.\"}\n",
+  "{\"decision\": \"block\", \"reason\": \"'Commit in flow' doctrine: uncommitted work_order is forbidden at end of session.\\n\\nDirty files (of this session):\\n${inner}\\n\\nRequired action: commit (1 jobsite = 1 coherent commit) THEN yield. If the worktree contains intentional WIP, declare it explicitly in the response before Stop.\"}\n"
+ ],
+ [
+  "#\n# hook-gitleaks-scan.sh — Scanner de secrets self-contained (gitleaks absent).\n#\n# Enforce la doctrine anti-leak #673 À L'ÉCRITURE : scanne les LIGNES AJOUTÉES du\n# diff stagé pour des VALEURS de secret en clair (mots de passe DB, 64-hex PG,\n# connection strings, clés privées, tokens/clés API, clés AWS). Exit 1 + liste\n# (valeurs REDACTÉES) si fuite. Née de la revue Mitnick #422 : mdp PG prod payante\n# <TENANT> en clair git-tracké, non détecté car la section 2 ne checkait que les\n# NOMS de fichiers, pas le contenu.\n#\n# Échappatoire volontaire : suffixe `# gitleaks:allow <raison>` sur la ligne\n# (faux positif légitime, ex fixture de test).\n",
+  "#\n# hook-gitleaks-scan.sh — Self-contained secrets scanner (gitleaks absent).\n#\n# Enforces anti-leak doctrine #673 AT WRITE TIME: scans the ADDED LINES of the\n# staged diff for plaintext secret VALUES (DB passwords, 64-hex PG,\n# connection strings, private keys, tokens/API keys, AWS keys). Exit 1 + list\n# (REDACTED values) on leak. Born from Mitnick review #422: paid prod PG password\n# for <TENANT> plaintext and git-tracked, undetected because section 2 only checked\n# file NAMES, not content.\n#\n# Deliberate escape hatch: suffix `# gitleaks:allow <reason>` on the line\n# (legitimate false positive, e.g. test fixture).\n"
+ ],
+ [
+  "# Diff stagé, lignes ajoutées seulement ; exclut binaires / templates / locks.\n",
+  "# Staged diff, added lines only; excludes binaries / templates / locks.\n"
+ ],
+ [
+  "# Lectures d'env / placeholders / échappatoire → jamais un secret en clair.\n",
+  "# Env reads / placeholders / escape hatch → never a plaintext secret.\n"
+ ],
+ [
+  "  # $1 = type ; $2 = ligne. Redacte tout token >=12 chars avant d'imprimer.\n",
+  "  # $1 = type; $2 = line. Redacts any token >=12 chars before printing.\n"
+ ],
+ [
+  "  echo \"  ✗ FUITE [$1] : ${safe#+}\"\n",
+  "  echo \"  ✗ LEAK [$1]: ${safe#+}\"\n"
+ ],
+ [
+  "  printf '%s' \"$line\" | grep -qiE \"(password|passwd|[^a-z]pwd|[^a-z]pass)\\s*[:=]>?\\s*['\\\"][^'\\\"]{6,}['\\\"]\" && flag \"mot-de-passe\" \"$line\" && continue\n",
+  "  printf '%s' \"$line\" | grep -qiE \"(password|passwd|[^a-z]pwd|[^a-z]pass)\\s*[:=]>?\\s*['\\\"][^'\\\"]{6,}['\\\"]\" && flag \"password\" \"$line\" && continue\n"
+ ],
+ [
+  "  printf '%s' \"$line\" | grep -qE \"BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY\" && flag \"cle-privee\" \"$line\" && continue\n",
+  "  printf '%s' \"$line\" | grep -qE \"BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY\" && flag \"private-key\" \"$line\" && continue\n"
+ ],
+ [
+  "  echo \"  ══ COMMIT BLOQUÉ — secret en clair dans le diff stagé (doctrine anti-leak #673) ══\"\n  echo \"  → Externalise la valeur : os.environ / process.env / \\$VAR, la valeur vit dans .env* (gitignoré).\"\n  echo \"  → Faux positif légitime ? suffixe la ligne avec '# gitleaks:allow <raison>'.\"\n",
+  "  echo \"  ══ COMMIT BLOCKED — plaintext secret in the staged diff (anti-leak doctrine #673) ══\"\n  echo \"  → Externalize the value: os.environ / process.env / \\$VAR; the value lives in .env* (gitignored).\"\n  echo \"  → Legitimate false positive? suffix the line with '# gitleaks:allow <reason>'.\"\n"
+ ],
+ [
+  "# hook-no-rebase-on-shared-branch.sh — Hook PreToolUse Bash.\n#\n# ENFORCE  : sur `synedre-os`, `preprod` est\n# partagée par N sessions Claude simultanées (worktree unique) ET mergée sur `main`\n# à chaque `./ship`. Un rebase y réécrit des SHA DÉJÀ PUBLIÉS sur origin/main →\n# divergence main↔preprod pour un contenu identique.\n#\n# Scar 2026-07-17 : main et preprod au MÊME commit (4550bfc7f). Un\n# `git pull --rebase` réflexe — déclenché par un simple push rejeté (Dependabot\n# avait mergé une PR sur origin/preprod) — a rejoué 153 commits et réécrit leurs\n# SHA. Divergence 152/154 commits pour un diff réel de 2 fichiers. Irréparable\n# sans force-push sur une branche partagée par 3 sessions actives.\n#\n# Bloque : `git rebase`, `git pull --rebase|-r`, `git push --force|-f` — UNIQUEMENT\n# quand la branche courante est partagée (preprod|main) et qu'on est dans le repo.\n# Laisse passer : `git rebase --abort|--continue|--skip|--quit` (sortir d'un rebase\n# en cours ne doit jamais être piégé), et tout rebase sur une branche de feature.\n#\n# Fail-open partout : toute erreur → exit 0. Ce hook ne piège JAMAIS une session.\n",
+  "# hook-no-rebase-on-shared-branch.sh — PreToolUse Bash hook.\n#\n# ENFORCES  : on `synedre-os`, `preprod` is\n# shared by N simultaneous Claude sessions (single worktree) AND merged into `main`\n# on every `./ship`. A rebase there rewrites SHAs ALREADY PUBLISHED on origin/main ->\n# main<->preprod divergence for identical content.\n#\n# Scar 2026-07-17: main and preprod on the SAME commit (4550bfc7f). A reflex\n# `git pull --rebase` — triggered by a mere rejected push (Dependabot had\n# merged a PR onto origin/preprod) — replayed 153 commits and rewrote their\n# SHAs. Divergence of 152/154 commits for a real diff of 2 files. Unrepairable\n# without a force-push on a branch shared by 3 active sessions.\n#\n# Blocks: `git rebase`, `git pull --rebase|-r`, `git push --force|-f` — ONLY\n# when the current branch is shared (preprod|main) and we are inside the repo.\n# Lets through: `git rebase --abort|--continue|--skip|--quit` (getting out of an\n# in-progress rebase must never be trapped), and any rebase on a feature branch.\n#\n# Fail-open everywhere: any error -> exit 0. This hook NEVER traps a session.\n"
+ ],
+ [
+  "  preprod|main) ;;   # branches partagées → on garde\n",
+  "  preprod|main) ;;   # shared branches -> keep guarding\n"
+ ],
+ [
+  "  *) exit 0 ;;       # feature branch → rebase libre\n",
+  "  *) exit 0 ;;       # feature branch -> rebase allowed\n"
+ ],
+ [
+  "# Sortir d'un rebase en cours reste TOUJOURS autorisé (ne jamais piéger).\n",
+  "# Getting out of an in-progress rebase is ALWAYS allowed (never trap).\n"
+ ],
+ [
+  "# Débuts de commande uniquement (^, ;, &&, ||, |) — réduit les faux positifs sur\n# le texte qui MENTIONNE la commande (heredoc, message de commit, doc).\n",
+  "# Command starts only (^, ;, &&, ||, |) — reduces false positives on text\n# that merely MENTIONS the command (heredoc, commit message, doc).\n"
+ ],
+ [
+  "BLOQUE — Réécriture d'historique sur branche partagée (doctrine )\n\n  Tu tentes un \\`${VIOLATION}\\` sur \\`${BRANCH}\\`, partagée par N sessions Claude\n  (worktree unique). Ses SHA sont DÉJÀ publiés sur origin/main via \\`./ship\\`\n  (ship-prod.sh fait \\`git merge preprod\\`) : les réécrire fait diverger\n  main↔preprod pour un contenu IDENTIQUE.\n\n  Scar 2026-07-17 : un \\`git pull --rebase\\` réflexe sur un push rejeté a\n  rejoué 153 commits et fait diverger main↔preprod de 152 commits — pour un diff\n  réel de 2 fichiers. Irréparable sans force-push sur une branche à 3 sessions\n  actives.\n\n  Ce que tu dois faire — si ton push a été rejeté (non-fast-forward, typiquement\n  une PR Dependabot mergée sur GitHub) :\n    git fetch origin ${BRANCH}\n    git log --oneline ${BRANCH}..origin/${BRANCH}   # VOIR ce qui manque en local\n    git pull --no-rebase origin ${BRANCH}           # merge — surtout PAS --rebase\n    git push origin ${BRANCH}\n\n  Réécrire l'historique pour de bon = décision d'Alex, jamais un réflexe d'IA :\n  expose-lui le coût et laisse-le trancher.\n",
+  "BLOCKED — History rewrite on a shared branch (doctrine )\n\n  You are attempting a \\`${VIOLATION}\\` on \\`${BRANCH}\\`, shared by N Claude\n  sessions (single worktree). Its SHAs are ALREADY published on origin/main via\n  \\`./ship\\` (ship-prod.sh does \\`git merge preprod\\`): rewriting them makes\n  main<->preprod diverge for IDENTICAL content.\n\n  Scar 2026-07-17: a reflex \\`git pull --rebase\\` on a rejected push replayed\n  153 commits and made main<->preprod diverge by 152 commits — for a real diff\n  of 2 files. Unrepairable without a force-push on a branch with 3 active\n  sessions.\n\n  What you must do — if your push was rejected (non-fast-forward, typically\n  a Dependabot PR merged on GitHub):\n    git fetch origin ${BRANCH}\n    git log --oneline ${BRANCH}..origin/${BRANCH}   # SEE what is missing locally\n    git pull --no-rebase origin ${BRANCH}           # merge — NEVER --rebase\n    git push origin ${BRANCH}\n\n  Rewriting history for good = Alex's decision, never an AI reflex:\n  lay out the cost for him and let him decide.\n"
+ ],
+ [
+  "# Avant `git commit`, scanne le transcript JSONL de la session courante pour\n# détecter les erreurs récurrentes (creds, paths, flags) et BLOQUE le commit\n# tant qu'aucune mémoire feedback_* n'a été gravée pour couvrir la rechute\n# probable. Applique la doctrine .\n#\n# Anti-boucle : marker /tmp/claude-pre-commit-scanned-<session>-<hits-hash>.\n# 1ère détection → block. 2e tentative avec mêmes hits → laisse passer (Claude\n# a vu l'avertissement et a décidé de procéder).\n#\n# Skips :\n#   - commande n'est pas un `git commit` (ou est un --amend / commit-tree)\n#   - pas de transcript_path lisible\n#   - aucune ligne d'erreur dans le transcript\n#\n# Sortie JSON systemMessage / decision=block.\n",
+  "# Before a `git commit`, scans the current session's JSONL transcript to\n# detect recurring errors (creds, paths, flags) and BLOCKS the commit as\n# long as no feedback_* memory has been engraved to cover the likely\n# relapse. Applies the doctrine .\n#\n# Anti-loop: marker /tmp/claude-pre-commit-scanned-<session>-<hits-hash>.\n# 1st detection -> block. 2nd attempt with the same hits -> let it through\n# (Claude has seen the warning and decided to proceed).\n#\n# Skips:\n#   - command is not a `git commit` (or is an --amend / commit-tree)\n#   - no readable transcript_path\n#   - no error line in the transcript\n#\n# JSON output systemMessage / decision=block.\n"
+ ],
+ [
+  "# Filtre tool_name=Bash + extraction command + transcript_path\n",
+  "# Filter tool_name=Bash + extract command + transcript_path\n"
+ ],
+ [
+  "# Durcissement #380 (Lovelace) : capter `git commit` même avec flags intercalés\n# (`git -c core.hooksPath=... commit`), même classe de bypass que le hook coverage.\n",
+  "# Hardening #380 (Lovelace): catch `git commit` even with interleaved flags\n# (`git -c core.hooksPath=... commit`), same bypass class as the coverage hook.\n"
+ ],
+ [
+  "# Scan transcript : extraire stdout/stderr UNIQUEMENT des vraies sorties de commande\n# (.toolUseResult, lignes type:\"user\" du transcript), grep patterns d'erreur récurrentes.\n# Limiter à 10 hits pour ne pas exploser le reason.\n#\n# IMPORTANT (fix faux positif) : on ne scanne PAS .attachment.stdout — c'est là que vivent\n# les contextes injectés par les hooks (SessionStart injecte les scars qualifiées\n# via sy_scars_inject.py, qui contiennent des mots comme « fatal:true »). L'ancienne\n# requête `.. | objects | select(has(\"stdout\"))` descendait partout et matchait ces\n# scars → block à chaque session portant une scar avec « fatal ». has(\"toolUseResult\")\n# cible les seules sorties de commande Bash (sur 6 transcripts, 100% des toolUseResult\n# proviennent d'un tool_use name:\"Bash\"). La grep anti-bruit sur la signature du hook\n# elle-même est devenue morte (ses outputs vont en .attachment, jamais scannés).\n",
+  "# Transcript scan: extract stdout/stderr ONLY from real command outputs\n# (.toolUseResult, type:\"user\" lines of the transcript), grep recurring error patterns.\n# Cap at 10 hits so the reason does not blow up.\n#\n# IMPORTANT (false-positive fix): we do NOT scan .attachment.stdout — that is where\n# the contexts injected by the hooks live (SessionStart injects the qualified scars\n# via sy_scars_inject.py, and they contain words like \"fatal:true\"). The old\n# query `.. | objects | select(has(\"stdout\"))` descended everywhere and matched those\n# scars -> block on every session carrying a scar with \"fatal\". has(\"toolUseResult\")\n# targets only the Bash command outputs (across 6 transcripts, 100% of toolUseResult\n# entries come from a tool_use name:\"Bash\"). The anti-noise grep on the hook's own\n# signature has become dead code (its outputs go to .attachment, never scanned).\n"
+ ],
+ [
+  "# Marker session-level : 1 block max par session (peu importe le set de hits,\n# qui mutate avec les outputs du hook lui-même dans le transcript).\n",
+  "# Session-level marker: at most 1 block per session (whatever the hit set,\n# which mutates with the hook's own outputs in the transcript).\n"
+ ],
+ [
+  "  # 2e tentative : Claude a déjà vu le warning, on laisse passer en warn\n",
+  "  # 2nd attempt: Claude has already seen the warning, let it through as a warn\n"
+ ],
+ [
+  "{\"systemMessage\": \"⚠️  Pre-commit scan : commit autorisé malgré erreurs transcript non-acknowledgées (anti-boucle).\\n${inner}\"}\n",
+  "{\"systemMessage\": \"⚠️  Pre-commit scan: commit allowed despite unacknowledged transcript errors (anti-loop).\\n${inner}\"}\n"
+ ],
+ [
+  "# 1ère détection : poser le marker + bloquer\n",
+  "# 1st detection: set the marker + block\n"
+ ],
+ [
+  "{\"decision\": \"block\", \"reason\": \"📋 Pre-commit scan transcript — erreurs récurrentes détectées dans la session.\\n\\nGrep des stdout/stderr (max 10) :\\n${inner}\\n\\nAvant de commiter : vérifier que chaque pattern a une mémoire feedback_* ou reference_* couvrant la valeur canonique (creds, path, user…). Sinon graver une mémoire dans ${HOME}/.claude/projects/-home-ubuntu-synedre-os/memory/ et la pointer depuis MEMORY.md.\\n\\nRelancer le même git commit pour passer (anti-boucle : 2e tentative laissée passer).\"}\n",
+  "{\"decision\": \"block\", \"reason\": \"📋 Pre-commit transcript scan — recurring errors detected in the session.\\n\\nGrep of stdout/stderr (max 10):\\n${inner}\\n\\nBefore committing: check that each pattern has a feedback_* or reference_* memory covering the canonical value (creds, path, user...). Otherwise engrave a memory in ${HOME}/.claude/projects/-home-ubuntu-synedre-os/memory/ and point to it from MEMORY.md.\\n\\nRerun the same git commit to pass (anti-loop: 2nd attempt is let through).\"}\n"
+ ],
+ [
+  "# hook-psql-stdin-not-argv-block.sh — Hook PreToolUse Edit|Write BLOQUANT.\n#\n# Matérialise l'invariant du test synedre/tests/test_psql_stdin_not_argv.py\n# (jobsite psql-stdin-migration, #530) : le SQL destiné à psql passe par\n# STDIN (input=sql), JAMAIS par argv (\"-c\", sql). L'erreur se voit À L'ÉCRITURE,\n# pas en attendant le test — sinon la dette repousse\n# ().\n#\n# SCAR (2026-07-20, run GLM #896) : `docker exec ... psql -c \"<sql>\"`\n# fait porter tout le payload par la LIGNE DE COMMANDE. Au-delà d'ARG_MAX\n# l'appel échoue en « Argument list too long » et l'event part à la poubelle\n# EN SILENCE — le cockpit perdait exactement les GROS events (longues\n# réponses d'agent, gros tool_result), sans qu'aucune alarme ne sonne.\n# `input=sql` (stdin) n'a pas cette limite (mesuré : 400 k caractères OK).\n#\n# Migration soldée : les 41 appels `-c sql` des modules Python ont été\n# réécrits vers `input=sql` (lots 1 et 2, #530). PLAFOND_ARGV_RESTANT = 0.\n# Ce hook ferme la porte à la RÉINTRODUCTION : un appel neuf s'écrit en\n# `input=sql`, point — on ne remonte pas le plafond.\n#\n# SCOPE — .py UNIQUEMENT, comme le test. Les appels psql des modules Node\n# (.cjs, ex sy_figma_capture.cjs:sqlRead) restent en '-c', sql sur des\n# requêtes de lecture bornées ; ils ne sont PAS concernés par ARG_MAX de la\n# même façon et sont hors champ du jobsite. Étendre le hook à ces fichiers\n# casserait ce garde pour un problème qu'il ne vise pas.\n#\n# CE QU'IL NE PEUT PAS GARDER : que le docker exec porte bien son flag -i\n# (sans -i, input= rend rc=0 SANS rien faire — échec silencieux pire que -c).\n# Ça, c'est le test TestStdinExigeLeFlagInteractif (analyse AST), pas un hook\n# au moment de l'écriture.\n#\n# Échappatoire consciente : suffixer d'un `# psql-stdin:allow <raison>`.\n#\n# Fail-OPEN : toute erreur / parse KO / fichier non ciblé → exit 0.\n# Blocage DUR (exit 2) sur match certain.\n",
+  "# hook-psql-stdin-not-argv-block.sh — BLOCKING PreToolUse Edit|Write hook.\n#\n# Materializes the invariant of the test synedre/tests/test_psql_stdin_not_argv.py\n# (jobsite psql-stdin-migration, #530): SQL destined for psql goes through\n# STDIN (input=sql), NEVER through argv (\"-c\", sql). The error shows up AT\n# WRITE TIME, not by waiting for the test — otherwise the debt keeps being\n# pushed back\n# ().\n#\n# SCAR (2026-07-20, GLM run #896): `docker exec ... psql -c \"<sql>\"`\n# makes the COMMAND LINE carry the entire payload. Beyond ARG_MAX the call\n# fails with \"Argument list too long\" and the event goes to the trash\n# SILENTLY — the cockpit was losing exactly the BIG events (long agent\n# responses, large tool_result), without any alarm going off.\n# `input=sql` (stdin) has no such limit (measured: 400 k characters OK).\n#\n# Migration settled: the 41 `-c sql` calls in the Python modules were\n# rewritten to `input=sql` (batches 1 and 2, #530). PLAFOND_ARGV_RESTANT = 0.\n# This hook closes the door on REINTRODUCTION: a new call is written with\n# `input=sql`, period — we do not raise the ceiling back up.\n#\n# SCOPE — .py ONLY, like the test. The psql calls in the Node modules\n# (.cjs, e.g. sy_figma_capture.cjs:sqlRead) stay on '-c', sql for bounded\n# read queries; they are NOT affected by ARG_MAX in the same way and are\n# out of the jobsite's scope. Extending the hook to those files would\n# break this guard for a problem it does not target.\n#\n# WHAT IT CANNOT GUARD: that the docker exec carries its -i flag\n# (without -i, input= returns rc=0 WITHOUT doing anything — a silent failure\n# worse than -c). That is the job of the TestStdinExigeLeFlagInteractif test\n# (AST analysis), not of a write-time hook.\n#\n# Conscious escape hatch: suffix with `# psql-stdin:allow <reason>`.\n#\n# Fail-OPEN: any error / broken parse / non-targeted file -> exit 0.\n# HARD block (exit 2) on a certain match.\n"
+ ],
+ [
+  "    # Edit -> new_string ; Write -> content ; MultiEdit -> concat des edits.\n",
+  "    # Edit -> new_string ; Write -> content ; MultiEdit -> concat of the edits.\n"
+ ],
+ [
+  "# Pas de contenu lisible ou pas de fichier ciblé → ne pas gêner (fail-open).\n",
+  "# No readable content or no targeted file -> do not get in the way (fail-open).\n"
+ ],
+ [
+  "# Scope : .py uniquement (cohérent avec le test, exclut les .cjs Node).\n",
+  "# Scope: .py only (consistent with the test, excludes the Node .cjs files).\n"
+ ],
+ [
+  "# Le gardien n'est pas soumis à sa propre garde : le fichier de test doit\n# pouvoir NOMMER le pattern (dans sa regex et sa docstring) pour le détecter.\n",
+  "# The guardian is not subject to its own guard: the test file must be able\n# to NAME the pattern (in its regex and its docstring) in order to detect it.\n"
+ ],
+ [
+  "# Échappatoire assumée et tracée.\n",
+  "# Deliberate and traceable escape hatch.\n"
+ ],
+ [
+  "# Normalise TOUS les whitespaces (espaces ET newlines) — la forme idiomatique\n# Python est la liste multi-ligne `[\"-c\",\\n sql]`. On rejoint ainsi la regex\n# `[\"\\']-c[\"\\']\\s*,\\s*sql` du test où \\s* mange aussi les sauts de ligne.\n",
+  "# Normalize ALL whitespace (spaces AND newlines) — the idiomatic Python form\n# is the multi-line list `[\"-c\",\\n sql]`. We thereby match the test's regex\n# `[\"\\']-c[\"\\']\\s*,\\s*sql` where \\s* also swallows line breaks.\n"
+ ],
+ [
+  "BLOQUÉ — SQL passé à psql par argv ($FILE)\n\n  Trouvé : $HIT\n\n  Au-delà d'ARG_MAX, l'appel « docker exec ... psql -c \"<sql>\" » échoue en\n  « Argument list too long » et le payload est perdu EN SILENCE. Ce sont\n  précisément les GROS payloads qui sautent (run GLM #896, 2026-07-20) —\n  personne ne le voyait puisque c'était un simple warning stderr noyé.\n\n  La migration vers STDIN est soldée (lots 1 et 2, #530) : zéro appel\n  « -c sql » ne subsiste dans les modules Python. Ce hook refuse la\n  RÉINTRODUCTION — on ne remonte pas le plafond.\n\n  À faire — alimenter psql par stdin :\n      proc = subprocess.run(_PSQL + [\"-U\", user, \"-d\", db],\n                            input=sql,    # ← stdin, pas argv\n                            stdout=PIPE, stderr=PIPE, ...)\n  Et EXIGER « docker exec -i » (sans -i, input= rend rc=0 SANS RIEN FAIRE —\n  voir le test TestStdinExigeLeFlagInteractif dans\n  synedre/tests/test_psql_stdin_not_argv.py).\n\n  Cas .cjs légitime hors champ ? (lecture bornée Node, ex sqlRead) : ce hook\n  ne cible QUE les .py. Ne pas l'étendre pour faire passer un cas Python —\n  écris plutôt input=sql.\n\n  Besoin réel et conscient ? suffixe la ligne : # psql-stdin:allow <raison>\n\n  Référence : test_psql_stdin_not_argv.py · \n  (1 doctrine = 1 hook — l'erreur se voit à l'écriture, pas au test).\n",
+  "BLOCKED — SQL passed to psql via argv ($FILE)\n\n  Found: $HIT\n\n  Beyond ARG_MAX, the call 'docker exec ... psql -c \"<sql>\"' fails with\n  \"Argument list too long\" and the payload is lost SILENTLY. It is\n  precisely the BIG payloads that get dropped (GLM run #896, 2026-07-20) —\n  nobody saw it since it was a mere stderr warning drowned in the noise.\n\n  The migration to STDIN is settled (batches 1 and 2, #530): zero\n  '-c sql' calls remain in the Python modules. This hook refuses any\n  REINTRODUCTION — we do not raise the ceiling back up.\n\n  What to do — feed psql via stdin:\n      proc = subprocess.run(_PSQL + [\"-U\", user, \"-d\", db],\n                            input=sql,    # <- stdin, not argv\n                            stdout=PIPE, stderr=PIPE, ...)\n  And REQUIRE 'docker exec -i' (without -i, input= returns rc=0 WITHOUT\n  DOING ANYTHING — see the TestStdinExigeLeFlagInteractif test in\n  synedre/tests/test_psql_stdin_not_argv.py).\n\n  Legitimate out-of-scope .cjs case? (bounded Node read, e.g. sqlRead): this\n  hook targets ONLY .py files. Do not extend it to push a Python case\n  through — write input=sql instead.\n\n  Real and conscious need? suffix the line: # psql-stdin:allow <reason>\n\n  Reference: test_psql_stdin_not_argv.py -\n  (1 doctrine = 1 hook — the error shows up at write time, not at test time).\n"
+ ],
+ [
+  "# hook-sql-escape-roundtrip.sh — Hook PreToolUse Edit|Write BLOQUANT.\n#\n# Matérialise  : en PostgreSQL\n# (standard_conforming_strings = on, vérifié), l'antislash dans un littéral est DÉJÀ\n# littéral — `'a\\b'` vaut a\\b. Le doubler AJOUTE un antislash au lieu d'en protéger un.\n#\n# SCAR (jobsite #466, 2026-07-17) : `synedre/sy_entities/base.py:_esc` faisait\n# `.replace(\"\\\\\", \"\\\\\\\\\")` — un réflexe MariaDB (où l'antislash EST un échappement),\n# hérité d'avant le drop de MariaDB le 2026-04-30. Résultat : TOUTES les écritures\n# d'entités corrompaient silencieusement les valeurs contenant un antislash. Aller-retour\n# mesuré : 3 cas cassés sur 5 (JSON+guillemets +2 car., chemin Windows +3, regex +2).\n# 30 champs illisibles en base (discoveries_json, decisions_json, context_json) — les\n# colonnes étant TEXT, PG ne validait rien : la corruption a passé des mois sans un bruit.\n#\n# Ce hook garde la REPRISE du réflexe : « échapper l'antislash » se re-tape tout seul,\n# c'est un automatisme de développeur MySQL/MariaDB.\n#\n# Ce qu'il NE peut pas garder : que l'aller-retour ait été réellement joué. Ça, c'est la\n# discipline de la doctrine (écrire → relire → comparer sur antislash, guillemet,\n# apostrophe, JSON imbriqué) — un hook ne peut pas prouver un test à ta place.\n#\n# Échappatoire consciente : suffixer d'un `# sql-escape:allow <raison>`.\n#\n# Fail-OPEN : toute erreur / parse KO → exit 0. Blocage DUR (exit 2) sur match certain.\n",
+  "# hook-sql-escape-roundtrip.sh — BLOCKING PreToolUse Edit|Write hook.\n#\n# Materializes  : in PostgreSQL\n# (standard_conforming_strings = on, verified), a backslash inside a literal is ALREADY\n# literal — `'a\\b'` is a\\b. Doubling it ADDS a backslash instead of escaping one.\n#\n# SCAR (jobsite #466, 2026-07-17): `synedre/sy_entities/base.py:_esc` did\n# `.replace(\"\\\\\", \"\\\\\\\\\")` — a MariaDB reflex (where the backslash IS an escape),\n# inherited from before the MariaDB drop on 2026-04-30. Result: ALL entity\n# writes silently corrupted values containing a backslash. Measured round-trip:\n# 3 of 5 cases broken (JSON+quotes +2 chars, Windows path +3, regex +2).\n# 30 fields unreadable in the database (discoveries_json, decisions_json, context_json) — the\n# columns being TEXT, PG validated nothing: the corruption went unnoticed for months.\n#\n# This hook guards against the RETURN of the reflex: \"escape the backslash\" gets\n# retyped all by itself, it is a MySQL/MariaDB developer automatism.\n#\n# What it CANNOT guard: that the round-trip was actually played out. That is the\n# discipline of the doctrine (write -> read back -> compare on backslash, double\n# quote, single quote, nested JSON) — a hook cannot prove a test in your place.\n#\n# Conscious escape hatch: suffix with `# sql-escape:allow <reason>`.\n#\n# Fail-OPEN: any error / broken parse -> exit 0. HARD block (exit 2) on a certain match.\n"
+ ],
+ [
+  "# Pas de contenu lisible ou pas un fichier ciblé → ne pas gêner (fail-open).\n",
+  "# No readable content or not a targeted file -> do not get in the way (fail-open).\n"
+ ],
+ [
+  "# Normalise les espaces pour attraper les variantes de formatage.\n",
+  "# Normalize whitespace to catch formatting variants.\n"
+ ],
+ [
+  "# Python / JS : doublement d'antislash dans un replace.\n",
+  "# Python / JS: backslash doubling inside a replace.\n"
+ ],
+ [
+  "BLOQUÉ — doublement d'antislash dans un échappement SQL ($FILE)\n\n  Trouvé : $HIT\n\n  En PostgreSQL, l'antislash NE s'échappe PAS. La base tourne en\n  standard_conforming_strings = on : un antislash dans un littéral est DÉJÀ\n  littéral ('a\\\\b' vaut a\\\\b). Le doubler AJOUTE un antislash — il ne protège rien.\n\n  C'est un réflexe MariaDB (où l'antislash EST un caractère d'échappement).\n  MariaDB a été droppé le 2026-04-30. Ce même réflexe a corrompu 30 champs en\n  base pendant des mois, sans un bruit : les colonnes sont TEXT, PG ne valide\n  rien, et personne ne relisait (jobsite #466).\n\n  À faire — n'échapper QUE l'apostrophe :\n    s = str(value).replace(\"'\", \"''\")\n    return f\"'{s}'\"\n\n  Puis PROUVER par aller-retour (écrire -> relire -> comparer) sur les cas qui\n  mordent : antislash, guillemet, apostrophe, apostrophe+antislash, JSON imbriqué.\n  Ne conclus jamais par lecture du code — c'est ce qui a laissé passer l'original.\n\n  Besoin réel et conscient ? suffixe la ligne : # sql-escape:allow <raison>\n\n  Référence :  — 1 doctrine = 1 hook.\n",
+  "BLOCKED — backslash doubling in a SQL escape ($FILE)\n\n  Found: $HIT\n\n  In PostgreSQL, the backslash is NOT escaped. The database runs with\n  standard_conforming_strings = on: a backslash inside a literal is ALREADY\n  literal ('a\\\\b' is a\\\\b). Doubling it ADDS a backslash — it protects nothing.\n\n  This is a MariaDB reflex (where the backslash IS an escape character).\n  MariaDB was dropped on 2026-04-30. This same reflex corrupted 30 fields in\n  the database for months, without a sound: the columns are TEXT, PG validates\n  nothing, and nobody was reading back (jobsite #466).\n\n  What to do — escape ONLY the single quote:\n    s = str(value).replace(\"'\", \"''\")\n    return f\"'{s}'\"\n\n  Then PROVE it with a round-trip (write -> read back -> compare) on the cases\n  that bite: backslash, double quote, single quote, quote+backslash, nested JSON.\n  Never conclude by reading the code — that is what let the original through.\n\n  Real and conscious need? suffix the line: # sql-escape:allow <reason>\n\n  Reference:  — 1 doctrine = 1 hook.\n"
+ ],
+ [
+  "#        abandon du fractionnement (sy_session_split.py retiré).\n",
+  "#        session splitting abandoned (sy_session_split.py removed).\n"
+ ],
+ [
+  "\"\"\"sy_session_handoff_resume.py — Hook SessionStart : auto-rappel du dernier handoff.\n\nAu démarrage d'une nouvelle session (startup/clear/resume), réinjecte automatiquement\nle handoff le plus récent produit par sy_session_split.py — pour reprendre sans rien\nréexpliquer après un fractionnement. Ferme la boucle : split crée → resume réinjecte.\n\nFiltres (anti-bruit + anti-boucle) :\n  - < 24h (SY_HANDOFF_RESUME_MAX_AGE_H) — pas de handoff périmé.\n  - session_id du handoff ≠ session_id courante — ne pas se réinjecter soi-même.\n  - MÊME RÉPERTOIRE DE WORK_ORDER que la session courante. Tous les worktrees\n    partagent ce dossier de handoffs (hooks câblés en absolu vers\n    ${SYNEDRE_ROOT}/synedre/) : sans ce scope, le handoff de\n    `wt/jobsite-X` remonte dans une session ouverte sur un autre tenant —\n    reprise sur le mauvais sujet. Les handoffs antérieurs à ce scope n'ont pas\n    la ligne « Répertoire de work_order » : acceptés (compat, ils périment en 24h)\n    mais signalés comme tels dans la bannière.\n  - handoff REMPLI (placeholders d'origine absents) — pas de stub vierge inutile.\n  - kill-switch SY_HANDOFF_RESUME_DISABLED=1.\nFail-open absolu : moindre souci → print rien (exit 0).\n\nSortie = JSON à DEUX CANAUX (patron sy_scars_inject_agent.py / hook-stop-\nuncommitted-warn.sh), parce qu'un stdout brut n'est visible que de l'agent :\n  - ``systemMessage``                      → AFFICHÉ DANS LE TERMINAL D'ALEX.\n    Carte d'identité du handoff repris : QUI (session courte + tenant) et QUOI\n    (sujet + prochain geste + chemin du fichier). Sans ça, la reprise est\n    invisible côté humain et prête à confusion (« de quoi me parle-t-il ? »).\n  - ``hookSpecificOutput.additionalContext`` → injecté dans le contexte agent.\n    Le corps complet du handoff, comme avant.\n\"\"\"\n",
+  "\"\"\"sy_session_handoff_resume.py — SessionStart hook: auto-recall of the latest handoff.\n\nWhen a new session starts (startup/clear/resume), automatically re-injects the most\nrecent handoff produced by sy_session_split.py — to resume without re-explaining\nanything after a session split. Closes the loop: split creates → resume re-injects.\n\nFilters (anti-noise + anti-loop):\n  - < 24h (SY_HANDOFF_RESUME_MAX_AGE_H) — no stale handoff.\n  - handoff session_id ≠ current session_id — never re-inject oneself.\n  - SAME WORK_ORDER DIRECTORY as the current session. All worktrees share\n    this handoff folder (hooks wired with absolute paths to\n    ${SYNEDRE_ROOT}/synedre/): without this scope, the handoff from\n    `wt/jobsite-X` surfaces in a session opened on another tenant —\n    resuming on the wrong subject. Handoffs predating this scope lack\n    the \"Work_order directory\" line: accepted (compat, they expire in 24h)\n    but flagged as such in the banner.\n  - handoff FILLED IN (original placeholders absent) — no useless blank stub.\n  - kill-switch SY_HANDOFF_RESUME_DISABLED=1.\nAbsolute fail-open: slightest issue → print nothing (exit 0).\n\nOutput = TWO-CHANNEL JSON (pattern of sy_scars_inject_agent.py / hook-stop-\nuncommitted-warn.sh), because raw stdout is only visible to the agent:\n  - ``systemMessage``                      → DISPLAYED IN ALEX'S TERMINAL.\n    Identity card of the resumed handoff: WHO (short session + tenant) and WHAT\n    (subject + next step + file path). Without it, the resume is invisible\n    to the human and ripe for confusion (\"what is it talking about?\").\n  - ``hookSpecificOutput.additionalContext`` → injected into the agent context.\n    The full handoff body, as before.\n\"\"\"\n"
+ ],
+ [
+  "# Marqueurs des placeholders du stub vierge créé par sy_session_split.py.\n",
+  "# Markers of the blank-stub placeholders created by sy_session_split.py.\n"
+ ],
+ [
+  "_PLACEHOLDER_MARKERS = (\n    \"(en 1-3 phrases\",\n    \"(fait :\",\n    \"(la prochaine action\",\n    \"(invariants, contraintes\",\n)\n",
+  "_PLACEHOLDER_MARKERS = (\n    \"(in 1-3 sentences\",\n    \"(done:\",\n    \"(the immediate next action\",\n    \"(invariants, constraints\",\n)\n"
+ ],
+ [
+  "    \"\"\"Sujet du handoff = titre H1, débarrassé du préfixe « Handoff de session — ».\"\"\"\n",
+  "    \"\"\"Handoff subject = H1 title, stripped of the \"Session handoff —\" prefix.\"\"\"\n"
+ ],
+ [
+  "    return \"(sans titre)\"\n",
+  "    return \"(untitled)\"\n"
+ ],
+ [
+  "    \"\"\"Codename tenant s'il est nommé explicitement (``tenant `xxx``` ).\"\"\"\n",
+  "    \"\"\"Tenant codename if explicitly named (``tenant `xxx``` ).\"\"\"\n"
+ ],
+ [
+  "    \"\"\"Répertoire de work_order inscrit par sy_session_split._write_handoff().\n    Chaîne vide = handoff legacy, écrit avant l'introduction du scope.\"\"\"\n",
+  "    \"\"\"Work_order directory written by sy_session_split._write_handoff().\n    Empty string = legacy handoff, written before the scope was introduced.\"\"\"\n"
+ ],
+ [
+  "    m = re.search(r\"^>\\s*R[ée]pertoire de work_order\\s*:\\s*`([^`]+)`\", body, re.M)\n",
+  "    m = re.search(r\"^>\\s*Work_order directory\\s*:\\s*`([^`]+)`\", body, re.M)\n"
+ ],
+ [
+  "    \"\"\"Comparaison de répertoires tolérante aux symlinks et au slash final.\"\"\"\n",
+  "    \"\"\"Directory comparison tolerant to symlinks and trailing slash.\"\"\"\n"
+ ],
+ [
+  "    \"\"\"Markdown → texte nu : gras/code/puces/numérotation retirés (lisible en terminal).\"\"\"\n",
+  "    \"\"\"Markdown → bare text: bold/code/bullets/numbering stripped (terminal-readable).\"\"\"\n"
+ ],
+ [
+  "    \"\"\"Prochain geste : le titre de section « Prochain geste » (après son tiret),\n    à défaut la 1re ligne de prose de cette section. Vide si la section manque.\"\"\"\n",
+  "    \"\"\"Next step: the \"next step\" section title (after its dash),\n    else the first prose line of that section. Empty if the section is missing.\"\"\"\n"
+ ],
+ [
+  "        if not line.startswith(\"#\") or \"prochain geste\" not in line.lower():\n",
+  "        if not line.startswith(\"#\") or \"next concrete step\" not in line.lower():\n"
+ ],
+ [
+  "    \"\"\"Écrit les deux canaux : carte d'identité pour Alex, corps pour l'agent.\"\"\"\n",
+  "    \"\"\"Writes both channels: identity card for Alex, body for the agent.\"\"\"\n"
+ ],
+ [
+  "    age = f\"il y a {age_h:.0f} h\" if age_h >= 1 else \"il y a moins d'1 h\"\n",
+  "    age = f\"{age_h:.0f} h ago\" if age_h >= 1 else \"less than 1 h ago\"\n"
+ ],
+ [
+  "        who += \" · ⚠ répertoire inconnu (handoff legacy)\"\n",
+  "        who += \" · ⚠ unknown directory (legacy handoff)\"\n"
+ ],
+ [
+  "    banner = [f\"📤 Handoff repris — {who}\", f\"   Sujet   : {_title(body)}\"]\n",
+  "    banner = [f\"📤 Handoff resumed — {who}\", f\"   Subject : {_title(body)}\"]\n"
+ ],
+ [
+  "        banner.append(f\"   Reste   : {step}\")\n",
+  "        banner.append(f\"   Next    : {step}\")\n"
+ ],
+ [
+  "    banner.append(f\"   Fichier : {path}\")\n",
+  "    banner.append(f\"   File    : {path}\")\n"
+ ],
+ [
+  "                \"📤 HANDOFF DE SESSION PRÉCÉDENTE \"\n                \"(auto-chargé par sy_session_handoff_resume.py)\\n\"\n                \"Reprends depuis l'état décrit ci-dessous — \"\n                \"ne recommence pas depuis zéro.\\n\"\n                f\"(source : {path.name})\\n\\n{body}\\n\"\n",
+  "                \"📤 PREVIOUS SESSION HANDOFF \"\n                \"(auto-loaded by sy_session_handoff_resume.py)\\n\"\n                \"Resume from the state described below — \"\n                \"do not start over from scratch.\\n\"\n                f\"(source: {path.name})\\n\\n{body}\\n\"\n"
+ ],
+ [
+  "        # session_id = nom sans le suffixe timestamp (le stamp n'a pas de '-')\n",
+  "        # session_id = name without the timestamp suffix (the stamp has no '-')\n"
+ ],
+ [
+  "            continue  # ne pas réinjecter la session courante\n",
+  "            continue  # never re-inject the current session\n"
+ ],
+ [
+  "            continue  # stub vierge, pas encore rempli\n",
+  "            continue  # blank stub, not filled in yet\n"
+ ],
+ [
+  "            continue  # autre worktree / autre jobsite — pas notre reprise\n",
+  "            continue  # other worktree / other jobsite — not our resume\n"
+ ],
+ [
+  "#        sous 130k — les sessions ne franchiront plus le seuil ; OU migration du\n#        handoff vers une table sy_session_handoff.\n",
+  "#        under 130k — sessions will no longer cross the threshold; OR migrate the\n#        handoff to a sy_session_handoff table.\n"
+ ],
+ [
+  "\"\"\"sy_session_split.py — Hook Stop : fractionnement de session à seuil de contexte.\n\nJobsite #508 (routage-coût) — coupe le coût quadratique des sessions longues\n(historique + tool results renvoyés à chaque tour). Déclenché à chaque Stop :\n  1. mesure le contexte RÉEL (message.usage du dernier assistant =\n     input + cache_read + cache_creation) et le nombre de tours ;\n  2. si seuil franchi ET pas déjà « armé » pour ce franchissement :\n       - Passe 1 (stop_hook_active=false) → {\"decision\":\"block\",\"reason\":…}\n         force l'écriture d'un handoff persistant + signale le fractionnement.\n       - Passe 2 (stop_hook_active=true)  → {\"systemMessage\":…} warn (anti-boucle).\n  3. re-armé quand le contexte repasse sous le seuil bas (= compaction survenue).\n\nLe backstop natif (CLAUDE_CODE_AUTO_COMPACT_WINDOW=150000 dans ./glm et ./codex)\ngarantit le reset mémoire via Haiku=glm-4.7 (gratuit) — même si ce hook rate ou\nque personne ne /clear (cas autonome). Ce hook ajoute la couche de contrôle :\nhandoff persistant (reprise/crash) + métriques (runaway detector, dashboard cost).\n\nGarde-fous :\n  - Kill-switch SY_SESSION_SPLIT_DISABLED=1 → exit 0.\n  - PAS de worker guard : on agit volontairement sur l'autonome (cœur de l'objectif).\n  - Anti-boucle : marker « armed » session-level (1 block par franchissement,\n    re-armé après compaction) + stop_hook_active (passe 2 même tour).\n  - Dégradation gracieuse totale : toute exception → exit 0 (jamais de brick).\n\nTous les paths/seuils sont surchargeables par env (pour les tests unitaires).\n\n\"\"\"\n",
+  "\"\"\"sy_session_split.py — Stop hook: session splitting at a context threshold.\n\nJobsite #508 (cost-routing) — cuts the quadratic cost of long sessions\n(history + tool results resent on every turn). Triggered on every Stop:\n  1. measures the REAL context (message.usage of the last assistant message =\n     input + cache_read + cache_creation) and the turn count;\n  2. if the threshold is crossed AND not already \"armed\" for this crossing:\n       - Pass 1 (stop_hook_active=false) → {\"decision\":\"block\",\"reason\":...}\n         forces writing a persistent handoff + signals the split.\n       - Pass 2 (stop_hook_active=true)  → {\"systemMessage\":...} warn (anti-loop).\n  3. re-armed when the context drops back under the low threshold (= compaction happened).\n\nThe native backstop (CLAUDE_CODE_AUTO_COMPACT_WINDOW=150000 in ./glm and ./codex)\nguarantees the memory reset via Haiku=glm-4.7 (free) — even if this hook misses or\nnobody runs /clear (autonomous case). This hook adds the control layer:\npersistent handoff (resume/crash) + metrics (runaway detector, cost dashboard).\n\nSafeguards:\n  - Kill-switch SY_SESSION_SPLIT_DISABLED=1 → exit 0.\n  - NO worker guard: we deliberately act on autonomous sessions (core of the goal).\n  - Anti-loop: session-level \"armed\" marker (1 block per crossing,\n    re-armed after compaction) + stop_hook_active (pass 2, same turn).\n  - Total graceful degradation: any exception → exit 0 (never bricks).\n\nAll paths/thresholds can be overridden via env (for unit tests).\n\n\"\"\"\n"
+ ],
+ [
+  "    pass  # fail-open : seuils/défauts marchent sans env chargé\n",
+  "    pass  # fail-open: thresholds/defaults work without env loaded\n"
+ ],
+ [
+  "# ─── Config (surchargeable par env pour les tests) ─────────────────────────────\n",
+  "# ─── Config (overridable via env for tests) ────────────────────────────────────\n"
+ ],
+ [
+  "# ─── Mesure du transcript (1 passe, vrai usage) ────────────────────────────────\n",
+  "# ─── Transcript measurement (1 pass, real usage) ───────────────────────────────\n"
+ ],
+ [
+  "    \"\"\"Retourne (tours, ctx_total, input_tokens, cache_read).\n\n    ctx_total = input + cache_read + cache_creation du DERNIER message assistant.\n    C'est la fenêtre réellement renvoyée au modèle = coût quadratique réel.\n    \"\"\"\n",
+  "    \"\"\"Returns (turns, ctx_total, input_tokens, cache_read).\n\n    ctx_total = input + cache_read + cache_creation of the LAST assistant message.\n    This is the window actually resent to the model = the real quadratic cost.\n    \"\"\"\n"
+ ],
+ [
+  "# ─── Effets : handoff persistant + log JSONL ───────────────────────────────────\n",
+  "# ─── Effects: persistent handoff + JSONL log ───────────────────────────────────\n"
+ ],
+ [
+  "    \"\"\"Crée un handoff stub versionné (jamais d'écrasement). L'agent le remplit.\n\n    ``cwd`` est inscrit en entête et fait foi pour le SCOPE de reprise : tous les\n    worktrees partagent ce dossier de handoffs (les hooks pointent en absolu vers\n    ${SYNEDRE_ROOT}/synedre/), donc sans cette ligne un handoff de\n    `wt/jobsite-X` remonterait dans une session ouverte ailleurs.\n    Lu par sy_session_handoff_resume._cwd_of() — ne pas changer le format seul.\n    \"\"\"\n",
+  "    \"\"\"Creates a versioned handoff stub (never overwrites). The agent fills it in.\n\n    ``cwd`` is written in the header and is authoritative for the resume SCOPE:\n    all worktrees share this handoff directory (hooks point absolutely to\n    ${SYNEDRE_ROOT}/synedre/), so without this line a handoff from\n    `wt/jobsite-X` would surface in a session opened elsewhere.\n    Read by sy_session_handoff_resume._cwd_of() — do not change the format alone.\n    \"\"\"\n"
+ ],
+ [
+  "            f\"# Handoff de session — fractionnement (contexte ~{ctx // 1000}k, \"\n            f\"{turns} tours)\\n\\n\"\n            f\"> Session `{session_id}` — {_now_iso()}\\n\"\n            f\"> Répertoire de work_order : `{cwd or os.getcwd()}`\\n\"\n            f\"> Détecté par `sy_session_split.py` (jobsite #508). Le contexte a \"\n            f\"franchi le seuil de fractionnement : coût quadratique.\\n\"\n            f\"> **Remplis les 4 sections ci-dessous** puis fractionne la session \"\n            f\"(/clear en interactif ; la compaction native reset en autonome).\\n\\n\"\n            f\"## 🎯 Objectif de la session\\n\"\n            f\"(en 1-3 phrases : ce que cette session devait accomplir)\\n\\n\"\n            f\"## ✅ État actuel\\n\"\n            f\"(fait : fichiers modifiés, décisions, commits)\\n\\n\"\n            f\"## ➡️ Prochain geste concret\\n\"\n            f\"(la prochaine action immédiate pour reprendre)\\n\\n\"\n            f\"## ⚠️ Contexte critique à ne pas perdre\\n\"\n            f\"(invariants, contraintes, gotchas, fichiers clés)\\n\",\n",
+  "            f\"# Session handoff — split (context ~{ctx // 1000}k, \"\n            f\"{turns} turns)\\n\\n\"\n            f\"> Session `{session_id}` — {_now_iso()}\\n\"\n            f\"> Work_order directory: `{cwd or os.getcwd()}`\\n\"\n            f\"> Detected by `sy_session_split.py` (jobsite #508). The context \"\n            f\"crossed the split threshold: quadratic cost.\\n\"\n            f\"> **Fill in the 4 sections below**, then split the session \"\n            f\"(/clear in interactive mode; native compaction resets in autonomous mode).\\n\\n\"\n            f\"## 🎯 Session objective\\n\"\n            f\"(in 1-3 sentences: what this session was meant to accomplish)\\n\\n\"\n            f\"## ✅ Current state\\n\"\n            f\"(done: modified files, decisions, commits)\\n\\n\"\n            f\"## ➡️ Next concrete step\\n\"\n            f\"(the immediate next action to resume)\\n\\n\"\n            f\"## ⚠️ Critical context not to lose\\n\"\n            f\"(invariants, constraints, gotchas, key files)\\n\",\n"
+ ],
+ [
+  "    \"\"\"Append JSONL fail-open (patron _log_borne). Alimente runaway + cost.\"\"\"\n",
+  "    \"\"\"Fail-open JSONL append (_log_borne pattern). Feeds runaway + cost.\"\"\"\n"
+ ],
+ [
+  "# ─── Décision (séparée de l'IO pour la testabilité) ────────────────────────────\n",
+  "# ─── Decision (separated from IO for testability) ──────────────────────────────\n"
+ ],
+ [
+  "    \"\"\"Retourne (exit_code, output_json | None). Effectue les effets de bord.\"\"\"\n",
+  "    \"\"\"Returns (exit_code, output_json | None). Performs the side effects.\"\"\"\n"
+ ],
+ [
+  "            # Passe 2 — anti-boucle même tour\n",
+  "            # Pass 2 — anti-loop, same turn\n"
+ ],
+ [
+  "                f\"⚠️ Contexte session à ~{ctx // 1000}k tokens / {turns} tours — \"\n                f\"handoff déjà demandé (anti-boucle). Fractionne la session \"\n                f\"(/clear) pour reprendre depuis le handoff.\"}\n",
+  "                f\"⚠️ Session context at ~{ctx // 1000}k tokens / {turns} turns — \"\n                f\"handoff already requested (anti-loop). Split the session \"\n                f\"(/clear) to resume from the handoff.\"}\n"
+ ],
+ [
+  "            # Déjà notifié pour ce franchissement — attendre la compaction native\n",
+  "            # Already notified for this crossing — wait for native compaction\n"
+ ],
+ [
+  "        # Passe 1 — 1er franchissement : block + handoff persistant\n",
+  "        # Pass 1 — 1st crossing: block + persistent handoff\n"
+ ],
+ [
+  "            f\"🔄 FRACTIONNEMENT DE SESSION — contexte ~{ctx // 1000}k tokens / \"\n            f\"{turns} tours (coût quadratique : l'historique est renvoyé à chaque \"\n            f\"tour). Doctrine #508 : produis un handoff de reprise AVANT de \"\n            f\"continuer.\\n\\n\"\n            f\"👉 Remplis les 4 sections du handoff : {handoff}\\n\"\n            f\"   (Objectif / État actuel / Prochain geste / Contexte critique)\\n\\n\"\n            f\"Puis fractionne : /clear en interactif (et reprends en collant le \"\n            f\"handoff). En autonomie, la compaction native (backstop 150k) reset \"\n            f\"le contexte — mais le handoff persistant reste ta garantie de \"\n            f\"reprise / crash.\"\n",
+  "            f\"🔄 SESSION SPLIT — context ~{ctx // 1000}k tokens / \"\n            f\"{turns} turns (quadratic cost: the history is resent on every \"\n            f\"turn). Doctrine #508: produce a resume handoff BEFORE \"\n            f\"continuing.\\n\\n\"\n            f\"👉 Fill in the 4 handoff sections: {handoff}\\n\"\n            f\"   (Objective / Current state / Next step / Critical context)\\n\\n\"\n            f\"Then split: /clear in interactive mode (and resume by pasting the \"\n            f\"handoff). In autonomous mode, native compaction (150k backstop) resets \"\n            f\"the context — but the persistent handoff remains your resume / \"\n            f\"crash guarantee.\"\n"
+ ],
+ [
+  "    # Sous le seuil : re-arm si une compaction native vient de survenir\n",
+  "    # Below the threshold: re-arm if a native compaction just happened\n"
+ ],
+ [
+  "# ─── Point d'entrée ────────────────────────────────────────────────────────────\n",
+  "# ─── Entry point ───────────────────────────────────────────────────────────────\n"
+ ],
+ [
+  "    \"\"\"Fail-open absolu : toute exception → exit 0 (jamais de brick de session).\"\"\"\n",
+  "    \"\"\"Absolute fail-open: any exception → exit 0 (never bricks a session).\"\"\"\n"
+ ],
+ [
+  "    # PAS de worker guard : on agit volontairement sur l'autonome.\n",
+  "    # NO worker guard: we deliberately act on autonomous sessions.\n"
+ ],
+ [
+  "\"\"\"Contrat GOLDEN du format de sortie de la couche entité (docker psql -tA -F\\\\t).\nJobsite #488 task 1.\n\nTOUTE implémentation alternative de _run_sql_read (ex pool psycopg2, task 2) DOIT\nproduire un output BYTE-IDENTIQUE à ces références sur cette batterie de types. C'est\nla preuve contre la corruption silencieuse (scar _esc antislash #1027 : un\ngarde-fou installé n'est pas un garde-fou qui mord).\n\nSubtilités capturées (2026-07-18, chemin docker-psql de référence) :\n  - bool → 't'/'f' (pas 'True'/'False')\n  - numeric garde l'échelle : 100.00::numeric(10,2) → '100.00', 5 → '5.00'\n  - timestamptz → '…+02' (offset SANS ':00') — DÉPEND du timezone de session :\n    le pool psycopg2 DOIT poser le même TimeZone que le container, sinon drift.\n  - NULL → '' ; NULL en dernière colonne → '\\\\t' trailing PRÉSERVÉ (rstrip('\\\\n') only)\n  - un '\\\\t' DANS une valeur texte est indistinct du séparateur (limite -tA assumée)\n  - jsonb rendu avec espaces : '{\"a\": 1, \"b\": [2, 3]}'\n  - array → '{1,2,3}' / '{x,y}'\n\"\"\"\n",
+  "\"\"\"GOLDEN contract of the entity-layer output format (docker psql -tA -F\\\\t).\nJobsite #488 task 1.\n\nANY alternative implementation of _run_sql_read (e.g. psycopg2 pool, task 2) MUST\nproduce BYTE-IDENTICAL output to these references on this battery of types. This is\nthe proof against silent corruption (scar _esc backslash #1027: an installed\nsafeguard is not a safeguard that bites).\n\nSubtleties captured (2026-07-18, reference docker-psql path):\n  - bool → 't'/'f' (not 'True'/'False')\n  - numeric keeps its scale: 100.00::numeric(10,2) → '100.00', 5 → '5.00'\n  - timestamptz → '…+02' (offset WITHOUT ':00') — DEPENDS on the session timezone:\n    the psycopg2 pool MUST set the same TimeZone as the container, otherwise drift.\n  - NULL → '' ; NULL in the last column → trailing '\\\\t' PRESERVED (rstrip('\\\\n') only)\n  - a '\\\\t' INSIDE a text value is indistinguishable from the separator (accepted -tA limit)\n  - jsonb rendered with spaces: '{\"a\": 1, \"b\": [2, 3]}'\n  - array → '{1,2,3}' / '{x,y}'\n\"\"\"\n"
+ ],
+ [
+  "# (name, sql, expected) — expected = sortie exacte de _run_sql_read (docker psql -tA -F\\t).\n",
+  "# (name, sql, expected) — expected = exact output of _run_sql_read (docker psql -tA -F\\t).\n"
+ ],
+ [
+  "    \"\"\"Exécute chaque requête du contrat via `runner(sql)->str` et compare au golden.\n    Retourne (ok, [(name, expected, got), ...]) — mismatches vides = parité parfaite.\"\"\"\n",
+  "    \"\"\"Runs each contract query via `runner(sql)->str` and compares to the golden.\n    Returns (ok, [(name, expected, got), ...]) — empty mismatches = perfect parity.\"\"\"\n"
+ ],
+ [
+  "        print(f\"✅ contrat golden vérifié — {len(CONTRACT)} cas byte-identiques (docker-psql)\")\n",
+  "        print(f\"✅ golden contract verified — {len(CONTRACT)} byte-identical cases (docker-psql)\")\n"
+ ],
+ [
+  "        print(f\"❌ {len(mism)} drift(s) :\")\n",
+  "        print(f\"❌ {len(mism)} drift(s):\")\n"
+ ],
+ [
+  "            print(f\"  {name}: attendu {exp!r} — obtenu {got!r}\")\n",
+  "            print(f\"  {name}: expected {exp!r} — got {got!r}\")\n"
+ ],
+ [
+  "\"\"\"\nsynedre/db.py — Helper connexion PostgreSQL pour agents sandbox.\n\nPourquoi ce fichier existe (scar 2026-05-23, jobsite #94) :\n  Les sous-claude spawnés par sy_task_worker via atlas-spawn-claude.mjs tournent\n  dans un contexte host Linux (pas dans Docker). Ils n'ont pas accès :\n    - au hostname interne Docker `sy_postgres` (non résolvable depuis le host)\n    - au socket Docker (permissions manquantes pour `docker exec sy_postgres psql`)\n\n  Solution : le container sy_postgres expose son port 5432 sur 127.0.0.1:5433\n  côté host. La connexion TCP localhost:5433 est accessible depuis tout process\n  host, y compris un sous-claude spawné par le task worker.\n\n  Ce helper `get_conn()` doit être préféré à tout `docker exec sy_postgres psql`\n  dans les scripts Python utilisés par des agents. Il est autonome — il ne dépend\n  pas de sy_entities/base.py (qui, lui, fait du docker exec pour les connexions).\n\nUsage :\n    from synedre.db import get_conn\n    conn = get_conn()\n    with conn.cursor() as cur:\n        cur.execute(\"SELECT now()\")\n        print(cur.fetchone())\n    conn.close()\n\nVariables d'environnement (toutes optionnelles sauf PG_PASSWORD) :\n    PG_HOST      — défaut : localhost\n    PG_PORT      — défaut : 5433  (port exposé du container sy_postgres)\n    PG_USER      — défaut : claude_pg\n    PG_DB        — défaut : sy_hub\n    PG_PASSWORD  — REQUIS (lève KeyError si absente)\n\nCes vars sont injectées automatiquement par atlas-spawn-claude.mjs dans l'env\nde chaque sous-claude spawné par le task worker (sauf PG_PASSWORD, héritée via\nprocess.env du cron qui démarre sy_task_worker.py).\n\"\"\"\n",
+  "\"\"\"\nsynedre/db.py — PostgreSQL connection helper for sandbox agents.\n\nWhy this file exists (scar 2026-05-23, jobsite #94):\n  The sub-claudes spawned by sy_task_worker via atlas-spawn-claude.mjs run\n  in a Linux host context (not inside Docker). They have no access to:\n    - the internal Docker hostname `sy_postgres` (not resolvable from the host)\n    - the Docker socket (missing permissions for `docker exec sy_postgres psql`)\n\n  Solution: the sy_postgres container exposes its port 5432 on 127.0.0.1:5433\n  host-side. The TCP connection localhost:5433 is reachable from any host\n  process, including a sub-claude spawned by the task worker.\n\n  This `get_conn()` helper must be preferred over any `docker exec sy_postgres psql`\n  in Python scripts used by agents. It is self-contained — it does not depend\n  on sy_entities/base.py (which itself uses docker exec for its connections).\n\nUsage:\n    from synedre.db import get_conn\n    conn = get_conn()\n    with conn.cursor() as cur:\n        cur.execute(\"SELECT now()\")\n        print(cur.fetchone())\n    conn.close()\n\nEnvironment variables (all optional except PG_PASSWORD):\n    PG_HOST      — default: localhost\n    PG_PORT      — default: 5433  (exposed port of the sy_postgres container)\n    PG_USER      — default: claude_pg\n    PG_DB        — default: sy_hub\n    PG_PASSWORD  — REQUIRED (raises KeyError if missing)\n\nThese vars are injected automatically by atlas-spawn-claude.mjs into the env\nof every sub-claude spawned by the task worker (except PG_PASSWORD, inherited\nvia process.env of the cron that starts sy_task_worker.py).\n\"\"\"\n"
+ ],
+ [
+  "    \"\"\"\n    Retourne une connexion psycopg2 vers sy_postgres via TCP localhost:5433.\n\n    Raises:\n        KeyError: si PG_PASSWORD n'est pas défini dans l'environnement.\n        psycopg2.OperationalError: si la connexion TCP échoue.\n    \"\"\"\n",
+  "    \"\"\"\n    Returns a psycopg2 connection to sy_postgres via TCP localhost:5433.\n\n    Raises:\n        KeyError: if PG_PASSWORD is not set in the environment.\n        psycopg2.OperationalError: if the TCP connection fails.\n    \"\"\"\n"
+ ],
+ [
+  "        password=os.environ['PG_PASSWORD'],  # requis — lève KeyError si absent\n",
+  "        password=os.environ['PG_PASSWORD'],  # required — raises KeyError if missing\n"
+ ],
+ [
+  "\"\"\"\nsy_env — Chargement centralisé des variables d'environnement.\n\nUsage dans tout sy_*.py :\n    from sy_env import load_env\n    load_env()\n\nCharge .env (Docker/partagé) puis .env.host (host-only, override).\nLes scripts Python tournent sur le HOST, donc .env.host a la priorité\n(ex: DB_PORT=3307 override le DB_PORT absent du .env nettoyé).\n\n\"\"\"\n",
+  "\"\"\"\nsy_env — Centralized loading of environment variables.\n\nUsage in every sy_*.py:\n    from sy_env import load_env\n    load_env()\n\nLoads .env (Docker/shared) then .env.host (host-only, override).\nPython scripts run on the HOST, so .env.host takes priority\n(e.g. DB_PORT=3307 overrides the DB_PORT missing from the cleaned .env).\n\n\"\"\"\n"
+ ],
+ [
+  "    \"\"\"Charge .env.host puis .env (sans override de l'os.environ existant).\n\n    Ordre de priorité (du plus fort au plus faible) :\n      1. Variables déjà présentes dans os.environ (subprocess overrides, cron exports)\n      2. .env.host (spécificités host — ports, credentials machine-locaux)\n      3. .env (valeurs partagées Docker/shyrka)\n\n    Charger .env.host en premier (override=False) garantit que les vars\n    subprocess/cron priment sur .env.host, tout en gardant .env.host\n    prioritaire sur .env (car .env est chargé ensuite, override=False,\n    et ne touche pas ce qu'on vient de mettre depuis .env.host).\n    \"\"\"\n",
+  "    \"\"\"Loads .env.host then .env (without overriding the existing os.environ).\n\n    Priority order (strongest to weakest):\n      1. Variables already present in os.environ (subprocess overrides, cron exports)\n      2. .env.host (host specifics — ports, machine-local credentials)\n      3. .env (shared Docker/shyrka values)\n\n    Loading .env.host first (override=False) guarantees that subprocess/cron\n    vars take precedence over .env.host, while keeping .env.host ahead of\n    .env (since .env is loaded afterwards, override=False, and does not\n    touch what we just set from .env.host).\n    \"\"\"\n"
+ ]
+]

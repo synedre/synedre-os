@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""Contrat GOLDEN du format de sortie de la couche entité (docker psql -tA -F\\t).
+"""GOLDEN contract of the entity-layer output format (docker psql -tA -F\\t).
 Jobsite #488 task 1.
 
-TOUTE implémentation alternative de _run_sql_read (ex pool psycopg2, task 2) DOIT
-produire un output BYTE-IDENTIQUE à ces références sur cette batterie de types. C'est
-la preuve contre la corruption silencieuse (scar _esc antislash #1027 : un
-garde-fou installé n'est pas un garde-fou qui mord).
+ANY alternative implementation of _run_sql_read (e.g. psycopg2 pool, task 2) MUST
+produce BYTE-IDENTICAL output to these references on this battery of types. This is
+the proof against silent corruption (scar _esc backslash #1027: an installed
+safeguard is not a safeguard that bites).
 
-Subtilités capturées (2026-07-18, chemin docker-psql de référence) :
-  - bool → 't'/'f' (pas 'True'/'False')
-  - numeric garde l'échelle : 100.00::numeric(10,2) → '100.00', 5 → '5.00'
-  - timestamptz → '…+02' (offset SANS ':00') — DÉPEND du timezone de session :
-    le pool psycopg2 DOIT poser le même TimeZone que le container, sinon drift.
-  - NULL → '' ; NULL en dernière colonne → '\\t' trailing PRÉSERVÉ (rstrip('\\n') only)
-  - un '\\t' DANS une valeur texte est indistinct du séparateur (limite -tA assumée)
-  - jsonb rendu avec espaces : '{"a": 1, "b": [2, 3]}'
+Subtleties captured (2026-07-18, reference docker-psql path):
+  - bool → 't'/'f' (not 'True'/'False')
+  - numeric keeps its scale: 100.00::numeric(10,2) → '100.00', 5 → '5.00'
+  - timestamptz → '…+02' (offset WITHOUT ':00') — DEPENDS on the session timezone:
+    the psycopg2 pool MUST set the same TimeZone as the container, otherwise drift.
+  - NULL → '' ; NULL in the last column → trailing '\\t' PRESERVED (rstrip('\\n') only)
+  - a '\\t' INSIDE a text value is indistinguishable from the separator (accepted -tA limit)
+  - jsonb rendered with spaces: '{"a": 1, "b": [2, 3]}'
   - array → '{1,2,3}' / '{x,y}'
 """
 from __future__ import annotations
 
-# (name, sql, expected) — expected = sortie exacte de _run_sql_read (docker psql -tA -F\t).
+# (name, sql, expected) — expected = exact output of _run_sql_read (docker psql -tA -F\t).
 CONTRACT: list[tuple[str, str, str]] = [
     ("bool",        "SELECT true, false",                                   "t\tf"),
     ("int",         "SELECT 42, -7",                                        "42\t-7"),
@@ -40,8 +40,8 @@ CONTRACT: list[tuple[str, str, str]] = [
 
 
 def verify_parity(runner) -> tuple[bool, list[tuple[str, str, str]]]:
-    """Exécute chaque requête du contrat via `runner(sql)->str` et compare au golden.
-    Retourne (ok, [(name, expected, got), ...]) — mismatches vides = parité parfaite."""
+    """Runs each contract query via `runner(sql)->str` and compares to the golden.
+    Returns (ok, [(name, expected, got), ...]) — empty mismatches = perfect parity."""
     mismatches: list[tuple[str, str, str]] = []
     for name, sql, expected in CONTRACT:
         try:
@@ -61,9 +61,9 @@ if __name__ == "__main__":
     from synedre.sy_entities.base import _run_sql_read
     ok, mism = verify_parity(_run_sql_read)
     if ok:
-        print(f"✅ contrat golden vérifié — {len(CONTRACT)} cas byte-identiques (docker-psql)")
+        print(f"✅ golden contract verified — {len(CONTRACT)} byte-identical cases (docker-psql)")
     else:
-        print(f"❌ {len(mism)} drift(s) :")
+        print(f"❌ {len(mism)} drift(s):")
         for name, exp, got in mism:
-            print(f"  {name}: attendu {exp!r} — obtenu {got!r}")
+            print(f"  {name}: expected {exp!r} — got {got!r}")
     sys.exit(0 if ok else 1)

@@ -15,6 +15,8 @@ Inputs (env vars):
   SY_DEST_ROOT  OSS repo root (where scrubbed files land).
   SY_WHITELIST  optional, default <DEST_ROOT>/publish-whitelist.txt.
   SY_DENYLIST   optional, default <DEST_ROOT>/02_atlas/workers/release/sy_codename_denylist.txt.
+  SY_PROSE      optional, default <DEST_ROOT>/02_atlas/workers/release/prose-en.json
+                (curated FR->EN prose overlay; absent file = pass skipped).
 
 Safety:
   - Every dest is resolved and asserted to live under DEST_ROOT (no path escape).
@@ -31,7 +33,9 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-from sy_scrub import scrub_text, load_denylist, resolve_denylist_path  # noqa: E402
+from sy_scrub import (  # noqa: E402
+    scrub_text, load_denylist, resolve_denylist_path, load_prose_pairs,
+)
 
 
 def parse_whitelist(text: str) -> list[tuple[str, str]]:
@@ -60,10 +64,12 @@ def write_release(
     dest_root: Path,
     pairs: list[tuple[str, str]],
     denylist: list[str],
+    prose_pairs: list | None = None,
 ) -> list[tuple[str, str]]:
     """Scrub and write every whitelisted file. Returns the list of (src, dst)
     actually written. Raises on missing source, non-text, or dest escaping
-    DEST_ROOT."""
+    DEST_ROOT. *prose_pairs* is the curated FR->EN prose overlay
+    (prose-en.json), applied as the last scrub transform."""
     written: list[tuple[str, str]] = []
     dest_resolved = dest_root.resolve()
     for src_rel, dst_rel in pairs:
@@ -71,7 +77,7 @@ def write_release(
         if not src.is_file():
             raise FileNotFoundError(f"whitelist source missing: {src}")
         text = src.read_text(encoding="utf-8")  # non-text raises UnicodeDecodeError -> loud fail
-        clean = scrub_text(text, denylist)
+        clean = scrub_text(text, denylist, prose_pairs=prose_pairs)
 
         dst = (dest_root / dst_rel)
         dst_resolved = dst.resolve()
@@ -108,9 +114,11 @@ def main() -> None:
         sys.exit(2)
 
     deny = load_denylist(resolve_denylist_path(deny_path))
+    prose_path = Path(os.environ.get("SY_PROSE", _HERE / "prose-en.json"))
+    prose = load_prose_pairs(prose_path) if prose_path.is_file() else None
 
     try:
-        written = write_release(src_root_p, dest_root_p, pairs, deny)
+        written = write_release(src_root_p, dest_root_p, pairs, deny, prose)
     except (FileNotFoundError, UnicodeDecodeError, ValueError) as exc:
         print(f"sy_extract: ABORT — {exc}", file=sys.stderr)
         sys.exit(1)

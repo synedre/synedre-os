@@ -1,40 +1,41 @@
 #!/bin/bash
 #
-# hook-psql-stdin-not-argv-block.sh — Hook PreToolUse Edit|Write BLOQUANT.
+# hook-psql-stdin-not-argv-block.sh — BLOCKING PreToolUse Edit|Write hook.
 #
-# Matérialise l'invariant du test synedre/tests/test_psql_stdin_not_argv.py
-# (jobsite psql-stdin-migration, #530) : le SQL destiné à psql passe par
-# STDIN (input=sql), JAMAIS par argv ("-c", sql). L'erreur se voit À L'ÉCRITURE,
-# pas en attendant le test — sinon la dette repousse
+# Materializes the invariant of the test synedre/tests/test_psql_stdin_not_argv.py
+# (jobsite psql-stdin-migration, #530): SQL destined for psql goes through
+# STDIN (input=sql), NEVER through argv ("-c", sql). The error shows up AT
+# WRITE TIME, not by waiting for the test — otherwise the debt keeps being
+# pushed back
 # ().
 #
-# SCAR (2026-07-20, run GLM #896) : `docker exec ... psql -c "<sql>"`
-# fait porter tout le payload par la LIGNE DE COMMANDE. Au-delà d'ARG_MAX
-# l'appel échoue en « Argument list too long » et l'event part à la poubelle
-# EN SILENCE — le cockpit perdait exactement les GROS events (longues
-# réponses d'agent, gros tool_result), sans qu'aucune alarme ne sonne.
-# `input=sql` (stdin) n'a pas cette limite (mesuré : 400 k caractères OK).
+# SCAR (2026-07-20, GLM run #896): `docker exec ... psql -c "<sql>"`
+# makes the COMMAND LINE carry the entire payload. Beyond ARG_MAX the call
+# fails with "Argument list too long" and the event goes to the trash
+# SILENTLY — the cockpit was losing exactly the BIG events (long agent
+# responses, large tool_result), without any alarm going off.
+# `input=sql` (stdin) has no such limit (measured: 400 k characters OK).
 #
-# Migration soldée : les 41 appels `-c sql` des modules Python ont été
-# réécrits vers `input=sql` (lots 1 et 2, #530). PLAFOND_ARGV_RESTANT = 0.
-# Ce hook ferme la porte à la RÉINTRODUCTION : un appel neuf s'écrit en
-# `input=sql`, point — on ne remonte pas le plafond.
+# Migration settled: the 41 `-c sql` calls in the Python modules were
+# rewritten to `input=sql` (batches 1 and 2, #530). PLAFOND_ARGV_RESTANT = 0.
+# This hook closes the door on REINTRODUCTION: a new call is written with
+# `input=sql`, period — we do not raise the ceiling back up.
 #
-# SCOPE — .py UNIQUEMENT, comme le test. Les appels psql des modules Node
-# (.cjs, ex sy_figma_capture.cjs:sqlRead) restent en '-c', sql sur des
-# requêtes de lecture bornées ; ils ne sont PAS concernés par ARG_MAX de la
-# même façon et sont hors champ du jobsite. Étendre le hook à ces fichiers
-# casserait ce garde pour un problème qu'il ne vise pas.
+# SCOPE — .py ONLY, like the test. The psql calls in the Node modules
+# (.cjs, e.g. sy_figma_capture.cjs:sqlRead) stay on '-c', sql for bounded
+# read queries; they are NOT affected by ARG_MAX in the same way and are
+# out of the jobsite's scope. Extending the hook to those files would
+# break this guard for a problem it does not target.
 #
-# CE QU'IL NE PEUT PAS GARDER : que le docker exec porte bien son flag -i
-# (sans -i, input= rend rc=0 SANS rien faire — échec silencieux pire que -c).
-# Ça, c'est le test TestStdinExigeLeFlagInteractif (analyse AST), pas un hook
-# au moment de l'écriture.
+# WHAT IT CANNOT GUARD: that the docker exec carries its -i flag
+# (without -i, input= returns rc=0 WITHOUT doing anything — a silent failure
+# worse than -c). That is the job of the TestStdinExigeLeFlagInteractif test
+# (AST analysis), not of a write-time hook.
 #
-# Échappatoire consciente : suffixer d'un `# psql-stdin:allow <raison>`.
+# Conscious escape hatch: suffix with `# psql-stdin:allow <reason>`.
 #
-# Fail-OPEN : toute erreur / parse KO / fichier non ciblé → exit 0.
-# Blocage DUR (exit 2) sur match certain.
+# Fail-OPEN: any error / broken parse / non-targeted file -> exit 0.
+# HARD block (exit 2) on a certain match.
 
 set -uo pipefail
 
@@ -44,7 +45,7 @@ CONTENT=""
 FILE=""
 if command -v jq >/dev/null 2>&1; then
     FILE=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
-    # Edit -> new_string ; Write -> content ; MultiEdit -> concat des edits.
+    # Edit -> new_string ; Write -> content ; MultiEdit -> concat of the edits.
     CONTENT=$(printf '%s' "$INPUT" | jq -r '
         [ .tool_input.new_string?, .tool_input.content?,
           (.tool_input.edits? // [] | .[]?.new_string?) ]
@@ -52,28 +53,28 @@ if command -v jq >/dev/null 2>&1; then
     ' 2>/dev/null)
 fi
 
-# Pas de contenu lisible ou pas de fichier ciblé → ne pas gêner (fail-open).
+# No readable content or no targeted file -> do not get in the way (fail-open).
 [ -z "$CONTENT" ] && exit 0
 [ -z "$FILE" ] && exit 0
 
-# Scope : .py uniquement (cohérent avec le test, exclut les .cjs Node).
+# Scope: .py only (consistent with the test, excludes the Node .cjs files).
 case "$FILE" in
     *.py) ;;
     *) exit 0 ;;
 esac
 
-# Le gardien n'est pas soumis à sa propre garde : le fichier de test doit
-# pouvoir NOMMER le pattern (dans sa regex et sa docstring) pour le détecter.
+# The guardian is not subject to its own guard: the test file must be able
+# to NAME the pattern (in its regex and its docstring) in order to detect it.
 case "$FILE" in
     *test_psql_stdin_not_argv.py) exit 0 ;;
 esac
 
-# Échappatoire assumée et tracée.
+# Deliberate and traceable escape hatch.
 case "$CONTENT" in *"psql-stdin:allow"*) exit 0 ;; esac
 
-# Normalise TOUS les whitespaces (espaces ET newlines) — la forme idiomatique
-# Python est la liste multi-ligne `["-c",\n sql]`. On rejoint ainsi la regex
-# `["\']-c["\']\s*,\s*sql` du test où \s* mange aussi les sauts de ligne.
+# Normalize ALL whitespace (spaces AND newlines) — the idiomatic Python form
+# is the multi-line list `["-c",\n sql]`. We thereby match the test's regex
+# `["\']-c["\']\s*,\s*sql` where \s* also swallows line breaks.
 NOSP=$(printf '%s' "$CONTENT" | tr -d '[:space:]')
 
 HIT=""
@@ -85,35 +86,35 @@ esac
 if [ -n "$HIT" ]; then
     cat >&2 << EOF
 
-BLOQUÉ — SQL passé à psql par argv ($FILE)
+BLOCKED — SQL passed to psql via argv ($FILE)
 
-  Trouvé : $HIT
+  Found: $HIT
 
-  Au-delà d'ARG_MAX, l'appel « docker exec ... psql -c "<sql>" » échoue en
-  « Argument list too long » et le payload est perdu EN SILENCE. Ce sont
-  précisément les GROS payloads qui sautent (run GLM #896, 2026-07-20) —
-  personne ne le voyait puisque c'était un simple warning stderr noyé.
+  Beyond ARG_MAX, the call 'docker exec ... psql -c "<sql>"' fails with
+  "Argument list too long" and the payload is lost SILENTLY. It is
+  precisely the BIG payloads that get dropped (GLM run #896, 2026-07-20) —
+  nobody saw it since it was a mere stderr warning drowned in the noise.
 
-  La migration vers STDIN est soldée (lots 1 et 2, #530) : zéro appel
-  « -c sql » ne subsiste dans les modules Python. Ce hook refuse la
-  RÉINTRODUCTION — on ne remonte pas le plafond.
+  The migration to STDIN is settled (batches 1 and 2, #530): zero
+  '-c sql' calls remain in the Python modules. This hook refuses any
+  REINTRODUCTION — we do not raise the ceiling back up.
 
-  À faire — alimenter psql par stdin :
+  What to do — feed psql via stdin:
       proc = subprocess.run(_PSQL + ["-U", user, "-d", db],
-                            input=sql,    # ← stdin, pas argv
+                            input=sql,    # <- stdin, not argv
                             stdout=PIPE, stderr=PIPE, ...)
-  Et EXIGER « docker exec -i » (sans -i, input= rend rc=0 SANS RIEN FAIRE —
-  voir le test TestStdinExigeLeFlagInteractif dans
+  And REQUIRE 'docker exec -i' (without -i, input= returns rc=0 WITHOUT
+  DOING ANYTHING — see the TestStdinExigeLeFlagInteractif test in
   synedre/tests/test_psql_stdin_not_argv.py).
 
-  Cas .cjs légitime hors champ ? (lecture bornée Node, ex sqlRead) : ce hook
-  ne cible QUE les .py. Ne pas l'étendre pour faire passer un cas Python —
-  écris plutôt input=sql.
+  Legitimate out-of-scope .cjs case? (bounded Node read, e.g. sqlRead): this
+  hook targets ONLY .py files. Do not extend it to push a Python case
+  through — write input=sql instead.
 
-  Besoin réel et conscient ? suffixe la ligne : # psql-stdin:allow <raison>
+  Real and conscious need? suffix the line: # psql-stdin:allow <reason>
 
-  Référence : test_psql_stdin_not_argv.py · 
-  (1 doctrine = 1 hook — l'erreur se voit à l'écriture, pas au test).
+  Reference: test_psql_stdin_not_argv.py -
+  (1 doctrine = 1 hook — the error shows up at write time, not at test time).
 
 EOF
     exit 2

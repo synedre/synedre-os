@@ -240,6 +240,80 @@ def test_comment_overlay_noop_without_map():
     assert sy_scrub.translate_db_comments(sql, None) == sql
 
 
+# === PROSE overlay + accents gate (anglicization, decided 2026-07-24) ========
+# Neutral FR->EN pairs: the mechanism is exercised without lifting any real
+# curated block from prose-en.json into a committed test file.
+_NEUTRAL_PROSE_PAIRS = [
+    ["# garde-fou : bloque l'écriture si la vérification échoue\n",
+     "# guardrail: blocks the write when the check fails\n"],
+    ["echo \"opération refusée\"\n", "echo \"operation refused\"\n"],
+]
+
+
+def test_prose_overlay_exact_replace_idempotent_noop():
+    """A known FR block is swapped for its curated EN text (exact-string);
+    running the pass again is a no-op (idempotence); pairs=None is a no-op."""
+    fr = _NEUTRAL_PROSE_PAIRS[0][0] + "do_thing()\n" + _NEUTRAL_PROSE_PAIRS[1][0]
+    out = sy_scrub.translate_prose(fr, _NEUTRAL_PROSE_PAIRS)
+    assert "guardrail: blocks the write" in out and "operation refused" in out
+    assert "garde-fou" not in out and "refusée" not in out
+    assert "do_thing()" in out
+    assert sy_scrub.translate_prose(out, _NEUTRAL_PROSE_PAIRS) == out
+    assert sy_scrub.translate_prose(fr, None) == fr
+
+
+def test_prose_unknown_fr_survives_scrub_and_dies_at_gate():
+    """MUTATION PROOF of the fail-closed contract: a FR comment the curated
+    map does not know (added/edited in the monolith after curation) survives
+    the scrub — inline prose cannot be dropped without dropping code — and
+    MUST be caught by the gate's accents category, forcing curation."""
+    rogue = "# commentaire arrivé après la curation, jamais relu\n"
+    out = sy_scrub.scrub_text(
+        rogue, NEUTRAL_DENYLIST,
+        path_map=NEUTRAL_PATH_MAP, schema_tokens=NEUTRAL_SCHEMA_TOKENS,
+        prose_pairs=_NEUTRAL_PROSE_PAIRS,
+    )
+    assert "arrivé" in out  # the scrub did NOT silently drop or mangle it
+    hits = [f for f in _gate(out) if f.category == "accents"]
+    assert hits, "gate missed the accented FR residue"
+    assert "arrivé" in {f.snippet for f in hits}  # whole-word snippet, not 'é'
+
+
+def test_accents_gate_off_for_history_and_clean_on_english():
+    """accent_check=False (the history-audit path) silences the category; a
+    plain-English text with an em-dash yields zero accents findings."""
+    fr = "# sécurité du système\n"
+    on = scan_text(fr, NEUTRAL_DENYLIST, path_literals=NEUTRAL_PATH_LITERALS,
+                   schema_tokens=NEUTRAL_SCHEMA_TOKENS)
+    off = scan_text(fr, NEUTRAL_DENYLIST, path_literals=NEUTRAL_PATH_LITERALS,
+                    schema_tokens=NEUTRAL_SCHEMA_TOKENS, accent_check=False)
+    assert [f for f in on if f.category == "accents"]
+    assert not [f for f in off if f.category == "accents"]
+    en = "# guardrail — blocks the write when the check fails\n"
+    assert not [f for f in _gate(en) if f.category == "accents"]
+
+
+def test_prose_map_keys_match_staged_tree(repo_root, release_dir):
+    """Every FR key of the committed prose-en.json must still match the staged
+    tree BY CONSTRUCTION — a key orphaned by a monolith edit means the map is
+    stale (the gate would catch the FR residue, but this points at the pair)."""
+    prose_path = release_dir / "prose-en.json"
+    if not prose_path.is_file():
+        pytest.skip("prose-en.json not curated yet")
+    pairs = sy_scrub.load_prose_pairs(prose_path)
+    staged = "\n===\n".join(
+        p.read_text(encoding="utf-8")
+        for p in sorted((repo_root / "core").rglob("*"))
+        + sorted((repo_root / "02_atlas" / "hooks").rglob("*"))
+        + sorted((repo_root / "02_atlas" / "workers").rglob("*"))
+        if p.is_file() and p.suffix in (".py", ".sh")
+        and "release" not in p.parts
+    )
+    for fr, en in pairs:
+        assert fr in staged or en in staged, (
+            f"stale prose pair — neither FR nor EN found in the staged tree:\n{fr!r}")
+
+
 # French markers that must never survive the curated SQL-message pass — verbs
 # and tracker refs sampled from every mapped message.
 _FR_MESSAGE_MARKERS = [
@@ -303,12 +377,16 @@ def test_integration_writer_whitelist_passes_gate(
 ):
     """Run the real writer on the whitelisted monolith files into a tmp OSS root,
     then assert the gate is clean AND no codename/path/header survived — by
-    iterating the real denylist, never hardcoding a codename."""
+    iterating the real denylist, never hardcoding a codename. The real
+    prose-en.json rides along, so 'gate clean' includes the accents category:
+    the staged tree is proven anglicized end-to-end."""
     from sy_extract import parse_whitelist, write_release
 
     wl = (repo_root / "publish-whitelist.txt").read_text(encoding="utf-8")
     pairs = parse_whitelist(wl)
-    written = write_release(Path(monolith_root), tmp_path, pairs, real_denylist)
+    prose_path = release_dir / "prose-en.json"
+    prose = sy_scrub.load_prose_pairs(prose_path) if prose_path.is_file() else None
+    written = write_release(Path(monolith_root), tmp_path, pairs, real_denylist, prose)
     assert len(written) == len(pairs), f"wrote {len(written)} / {len(pairs)}"
 
     # 1. gate over the staged tree (defaults = real monolith vocab)

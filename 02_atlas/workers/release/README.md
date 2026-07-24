@@ -33,7 +33,7 @@ The pipeline is **whitelist-driven** and **scrub-before-write**:
 | Module | Role | Camp |
 |---|---|---|
 | `sy_extract.py` | Writer: copies the whitelisted files, scrubbing each before write. | East (producer) |
-| `sy_scrub.py` | 10 ordered, idempotent transforms (headers, codenames, paths, schema, prefixes, pg_dump artifacts, SQL messages, FR→EN lexicon, COMMENT overlay). Pure functions. | East |
+| `sy_scrub.py` | 11 ordered, idempotent transforms (headers, codenames, paths, schema, prefixes, pg_dump artifacts, SQL messages, FR→EN lexicon, COMMENT overlay, prose overlay). Pure functions. | East |
 | `sy_leak_gate.py` | Detector: FAILs on residual leak (codename / path / schema / secret). Secrets are masked `<SECRET>` so the detector never leaks the value. | West (validator) |
 | `sy_publish_audit.py` | Tree + git-history audit: a leak removed from the working tree still lives in history. | West |
 | `sy_db_schema_doc.py` | Layer 2 doc generator: `bootstrap.sql` → `documentation/db-schema.md` (auto, never hand-edited). | — |
@@ -98,6 +98,24 @@ Three transforms carry it:
 The gate enforces the result: a `lexicon` finding on any tracked code file
 fails the release (off in the history audit — the pre-rename vocabulary
 legitimately lives in the commits that performed the rename).
+
+## Prose (full anglicization)
+
+Beyond the 5 lexicon words, the facades were AUTHORED in French: whole
+docstrings, comment blocks, user-facing messages. A fourth transform carries
+the anglicization:
+
+- `translate_prose` — curated exact-string overlay (`prose-en.json`, a JSON
+  array of `[fr, en]` pairs). Keys are lifted **byte-exact from the staged
+  output** (post-rename, post-lexicon), so the pass runs LAST. Unlike the
+  COMMENT overlay it cannot drop what it does not know — inline prose cannot
+  be removed without removing code — so the fail-closed lives at the gate
+  instead: an `accents` finding (any accented Latin letter in tracked code)
+  fails the release. A FR comment edited or added in the monolith stops
+  matching its curated key, survives the scrub in FR, and the gate forces
+  curation. Heuristic by design: accent-free FR slips the accents check (the
+  lexicon category covers the 5 core words); the periodic human sweep covers
+  the rest. Off in the history audit, like `lexicon`.
 
 ### Regenerating `bootstrap.sql`
 

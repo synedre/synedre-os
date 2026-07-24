@@ -42,6 +42,12 @@ Transforms (order matters — see scrub_text):
      when a map is provided, every COMMENT ON is either replaced by its curated
      EN text or DROPPED — unreviewed FR prose never ships. map=None = no-op
      (the facade path; facades carry no COMMENT ON).
+ 11. translate prose            (curated overlay prose-en.json: exact FR
+     comment/docstring/message blocks -> EN). Runs LAST — the keys are curated
+     from the STAGED output, so they carry post-rename identifiers and
+     post-lexicon vocabulary. Unknown FR prose survives this pass and is then
+     caught by the gate's accents check (fail-closed at the gate, not here:
+     inline prose cannot be dropped without dropping code).
 
 Scope: structure, not secrets. Secrets are NOT scrubbed here — they must FAIL at
 the gate and demand human action, never be silently redacted into a publish.
@@ -416,16 +422,48 @@ def translate_db_comments(text: str, comment_map: dict | None = None) -> str:
     return _COMMENT_STMT_RE.sub(_repl, text)
 
 
+# ---- 10. prose (curated FR -> EN blocks, exact-string) -----------------------
+# The facades were authored in French in the monolith: whole docstrings, comment
+# blocks and user-facing echo messages. Like the SQL messages, prose is text a
+# regex cannot translate — each known FR block maps to a curated EN replacement
+# (prose-en.json: a JSON array of [fr, en] pairs). Keys are curated FROM the
+# staged output (byte-exact, extracted by line range — never retyped), so they
+# match post-rename identifiers and post-lexicon vocabulary: this pass runs
+# LAST. A FR block edited in the monolith stops matching its key, survives in
+# FR, and FAILS the gate's accents check — curation is forced, never skipped.
+
+
+def load_prose_pairs(path: Path | str) -> list:
+    """Read the curated FR->EN prose overlay (JSON array of [fr, en] pairs)."""
+    import json
+
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def translate_prose(text: str, pairs=None) -> str:
+    """Replace each known FR prose block with its curated EN text.
+
+    Exact-string (str.replace), never regex: keys are multi-line blocks lifted
+    verbatim from the staged files. pairs=None is a no-op. Idempotent: once
+    replaced, the FR key no longer appears. Unknown FR prose is NOT handled
+    here — the gate's accents check is the fail-closed backstop."""
+    if not pairs:
+        return text
+    for fr, en in pairs:
+        text = text.replace(fr, en)
+    return text
+
+
 # ---- orchestration ----------------------------------------------------------
 def scrub_text(
     text, denylist=None, *, path_map=None, schema_tokens=None,
-    sql_messages=None, lexicon=None, comment_map=None,
+    sql_messages=None, lexicon=None, comment_map=None, prose_pairs=None,
 ) -> str:
     """Apply all transforms in order. denylist=None skips codenames;
-    comment_map=None skips the COMMENT overlay (facade path). path_map /
-    schema_tokens / sql_messages / lexicon override the monolith defaults
-    (neutral test fixtures pass their own so the test stays token-free in the
-    public repo)."""
+    comment_map=None skips the COMMENT overlay (facade path); prose_pairs=None
+    skips the prose overlay. path_map / schema_tokens / sql_messages / lexicon
+    override the monolith defaults (neutral test fixtures pass their own so the
+    test stays token-free in the public repo)."""
     text = strip_proprietary_headers(text)
     text = strip_private_refs(text)
     if denylist:
@@ -437,6 +475,7 @@ def scrub_text(
     text = translate_sql_messages(text, sql_messages)
     text = translate_lexicon(text, lexicon)
     text = translate_db_comments(text, comment_map)
+    text = translate_prose(text, prose_pairs)
     return text
 
 
@@ -444,16 +483,20 @@ def scrub_text(
 def main() -> None:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     comments = None
+    prose = None
     for a in sys.argv[1:]:
         if a.startswith("--comments="):
             comments = load_comment_map(a.split("=", 1)[1])
+        if a.startswith("--prose="):
+            prose = load_prose_pairs(a.split("=", 1)[1])
     if not args:
-        print("usage: sy_scrub.py <source-file> [denylist.txt] [--comments=map.json]",
+        print("usage: sy_scrub.py <source-file> [denylist.txt] "
+              "[--comments=map.json] [--prose=pairs.json]",
               file=sys.stderr)
         sys.exit(2)
     src = Path(args[0]).read_text(encoding="utf-8")
     deny = load_denylist(args[1]) if len(args) > 1 else None
-    sys.stdout.write(scrub_text(src, deny, comment_map=comments))
+    sys.stdout.write(scrub_text(src, deny, comment_map=comments, prose_pairs=prose))
 
 
 if __name__ == "__main__":

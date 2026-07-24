@@ -1,13 +1,13 @@
 """
-sy_env — Chargement centralisé des variables d'environnement.
+sy_env — Centralized loading of environment variables.
 
-Usage dans tout sy_*.py :
+Usage in every sy_*.py:
     from sy_env import load_env
     load_env()
 
-Charge .env (Docker/partagé) puis .env.host (host-only, override).
-Les scripts Python tournent sur le HOST, donc .env.host a la priorité
-(ex: DB_PORT=3307 override le DB_PORT absent du .env nettoyé).
+Loads .env (Docker/shared) then .env.host (host-only, override).
+Python scripts run on the HOST, so .env.host takes priority
+(e.g. DB_PORT=3307 overrides the DB_PORT missing from the cleaned .env).
 
 """
 
@@ -18,17 +18,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_env():
-    """Charge .env.host puis .env (sans override de l'os.environ existant).
+    """Loads .env.host then .env (without overriding the existing os.environ).
 
-    Ordre de priorité (du plus fort au plus faible) :
-      1. Variables déjà présentes dans os.environ (subprocess overrides, cron exports)
-      2. .env.host (spécificités host — ports, credentials machine-locaux)
-      3. .env (valeurs partagées Docker/shyrka)
+    Priority order (strongest to weakest):
+      1. Variables already present in os.environ (subprocess overrides, cron exports)
+      2. .env.host (host specifics — ports, machine-local credentials)
+      3. .env (shared Docker/shyrka values)
 
-    Charger .env.host en premier (override=False) garantit que les vars
-    subprocess/cron priment sur .env.host, tout en gardant .env.host
-    prioritaire sur .env (car .env est chargé ensuite, override=False,
-    et ne touche pas ce qu'on vient de mettre depuis .env.host).
+    Loading .env.host first (override=False) guarantees that subprocess/cron
+    vars take precedence over .env.host, while keeping .env.host ahead of
+    .env (since .env is loaded afterwards, override=False, and does not
+    touch what we just set from .env.host).
     """
     load_dotenv(ROOT / ".env.host", override=False)
     load_dotenv(ROOT / ".env", override=False)

@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
 #
-# hook-no-rebase-on-shared-branch.sh — Hook PreToolUse Bash.
+# hook-no-rebase-on-shared-branch.sh — PreToolUse Bash hook.
 #
-# ENFORCE  : sur `synedre-os`, `preprod` est
-# partagée par N sessions Claude simultanées (worktree unique) ET mergée sur `main`
-# à chaque `./ship`. Un rebase y réécrit des SHA DÉJÀ PUBLIÉS sur origin/main →
-# divergence main↔preprod pour un contenu identique.
+# ENFORCES  : on `synedre-os`, `preprod` is
+# shared by N simultaneous Claude sessions (single worktree) AND merged into `main`
+# on every `./ship`. A rebase there rewrites SHAs ALREADY PUBLISHED on origin/main ->
+# main<->preprod divergence for identical content.
 #
-# Scar 2026-07-17 : main et preprod au MÊME commit (4550bfc7f). Un
-# `git pull --rebase` réflexe — déclenché par un simple push rejeté (Dependabot
-# avait mergé une PR sur origin/preprod) — a rejoué 153 commits et réécrit leurs
-# SHA. Divergence 152/154 commits pour un diff réel de 2 fichiers. Irréparable
-# sans force-push sur une branche partagée par 3 sessions actives.
+# Scar 2026-07-17: main and preprod on the SAME commit (4550bfc7f). A reflex
+# `git pull --rebase` — triggered by a mere rejected push (Dependabot had
+# merged a PR onto origin/preprod) — replayed 153 commits and rewrote their
+# SHAs. Divergence of 152/154 commits for a real diff of 2 files. Unrepairable
+# without a force-push on a branch shared by 3 active sessions.
 #
-# Bloque : `git rebase`, `git pull --rebase|-r`, `git push --force|-f` — UNIQUEMENT
-# quand la branche courante est partagée (preprod|main) et qu'on est dans le repo.
-# Laisse passer : `git rebase --abort|--continue|--skip|--quit` (sortir d'un rebase
-# en cours ne doit jamais être piégé), et tout rebase sur une branche de feature.
+# Blocks: `git rebase`, `git pull --rebase|-r`, `git push --force|-f` — ONLY
+# when the current branch is shared (preprod|main) and we are inside the repo.
+# Lets through: `git rebase --abort|--continue|--skip|--quit` (getting out of an
+# in-progress rebase must never be trapped), and any rebase on a feature branch.
 #
-# Fail-open partout : toute erreur → exit 0. Ce hook ne piège JAMAIS une session.
+# Fail-open everywhere: any error -> exit 0. This hook NEVER traps a session.
 
 set -uo pipefail
 
@@ -36,15 +36,15 @@ cd "$REPO" 2>/dev/null || exit 0
 
 BRANCH=$(git branch --show-current 2>/dev/null || echo "")
 case "$BRANCH" in
-  preprod|main) ;;   # branches partagées → on garde
-  *) exit 0 ;;       # feature branch → rebase libre
+  preprod|main) ;;   # shared branches -> keep guarding
+  *) exit 0 ;;       # feature branch -> rebase allowed
 esac
 
-# Sortir d'un rebase en cours reste TOUJOURS autorisé (ne jamais piéger).
+# Getting out of an in-progress rebase is ALWAYS allowed (never trap).
 printf '%s' "$CMD" | grep -qE 'git[[:space:]]+rebase[[:space:]]+--(abort|continue|skip|quit)' && exit 0
 
-# Débuts de commande uniquement (^, ;, &&, ||, |) — réduit les faux positifs sur
-# le texte qui MENTIONNE la commande (heredoc, message de commit, doc).
+# Command starts only (^, ;, &&, ||, |) — reduces false positives on text
+# that merely MENTIONS the command (heredoc, commit message, doc).
 BOL='(^|;|&&|\|\||\|)[[:space:]]*'
 VIOLATION=""
 
@@ -60,27 +60,27 @@ fi
 
 cat >&2 <<EOF
 
-BLOQUE — Réécriture d'historique sur branche partagée (doctrine )
+BLOCKED — History rewrite on a shared branch (doctrine )
 
-  Tu tentes un \`${VIOLATION}\` sur \`${BRANCH}\`, partagée par N sessions Claude
-  (worktree unique). Ses SHA sont DÉJÀ publiés sur origin/main via \`./ship\`
-  (ship-prod.sh fait \`git merge preprod\`) : les réécrire fait diverger
-  main↔preprod pour un contenu IDENTIQUE.
+  You are attempting a \`${VIOLATION}\` on \`${BRANCH}\`, shared by N Claude
+  sessions (single worktree). Its SHAs are ALREADY published on origin/main via
+  \`./ship\` (ship-prod.sh does \`git merge preprod\`): rewriting them makes
+  main<->preprod diverge for IDENTICAL content.
 
-  Scar 2026-07-17 : un \`git pull --rebase\` réflexe sur un push rejeté a
-  rejoué 153 commits et fait diverger main↔preprod de 152 commits — pour un diff
-  réel de 2 fichiers. Irréparable sans force-push sur une branche à 3 sessions
-  actives.
+  Scar 2026-07-17: a reflex \`git pull --rebase\` on a rejected push replayed
+  153 commits and made main<->preprod diverge by 152 commits — for a real diff
+  of 2 files. Unrepairable without a force-push on a branch with 3 active
+  sessions.
 
-  Ce que tu dois faire — si ton push a été rejeté (non-fast-forward, typiquement
-  une PR Dependabot mergée sur GitHub) :
+  What you must do — if your push was rejected (non-fast-forward, typically
+  a Dependabot PR merged on GitHub):
     git fetch origin ${BRANCH}
-    git log --oneline ${BRANCH}..origin/${BRANCH}   # VOIR ce qui manque en local
-    git pull --no-rebase origin ${BRANCH}           # merge — surtout PAS --rebase
+    git log --oneline ${BRANCH}..origin/${BRANCH}   # SEE what is missing locally
+    git pull --no-rebase origin ${BRANCH}           # merge — NEVER --rebase
     git push origin ${BRANCH}
 
-  Réécrire l'historique pour de bon = décision d'Alex, jamais un réflexe d'IA :
-  expose-lui le coût et laisse-le trancher.
+  Rewriting history for good = Alex's decision, never an AI reflex:
+  lay out the cost for him and let him decide.
 
 EOF
 exit 2

@@ -21,6 +21,14 @@ Detection categories:
                  conduite) — a wording defect, not a secret; the published tree
                  must be international (EN: jobsite/work_order/task/scar/
                  playbook). Off in the history audit.
+  accents        any accented Latin letter — the mechanical backstop of the
+                 prose-en.json overlay (sy_scrub transform 11): a FR comment
+                 edited or added in the monolith stops matching its curated key,
+                 survives the scrub in FR, and MUST fail here so curation is
+                 forced, never skipped. Heuristic by design: accent-free FR
+                 slips through (the lexicon category covers the 5 core words).
+                 Off in the history audit — the pre-anglicization commits
+                 legitimately carry FR prose.
 
 Scope (the "what gets published" boundary) — scan_tracked_code, the CLI default:
   Scanned  — git-tracked CODE files only (core/, 02_atlas/hooks/,
@@ -104,6 +112,14 @@ _LEXICON_RE = re.compile(
     r"cicatrices?|conduites?)(?![A-Za-zÀ-ÿ0-9])",
     re.IGNORECASE,
 )
+# Accented Latin letters (Latin-1 letter ranges, × and ÷ excluded, + Œ/œ). The
+# match widens to the whole word so the report reads 'sécurité', not 'é'. This
+# is the fail-closed backstop of the prose-en.json overlay: unknown FR prose
+# survives the scrub (inline prose cannot be dropped without dropping code) and
+# must die HERE instead. Off in the history audit (accent_check=False).
+_ACCENT_WORD_RE = re.compile(
+    r"[A-Za-zÀ-ÖØ-öø-ÿŒœ]*[À-ÖØ-öø-ÿŒœ][A-Za-zÀ-ÖØ-öø-ÿŒœ]*"
+)
 
 
 def _line_of(text: str, offset: int) -> int:
@@ -112,13 +128,16 @@ def _line_of(text: str, offset: int) -> int:
 
 def scan_text(
     text, denylist, *, path_literals=None, schema_tokens=None, lexicon_check=True,
+    accent_check=True,
 ) -> list[Finding]:
     """Detect leaks in a single text blob. Secret matches are masked to
     <SECRET> in the snippet; the raw secret value never leaves this function.
     path_literals / schema_tokens override the monolith defaults (neutral fixtures
     inject their own so the test stays token-free in the public repo).
     lexicon_check=False drops the FR-vocabulary category — used by the history
-    audit, where the pre-rename vocabulary legitimately appears."""
+    audit, where the pre-rename vocabulary legitimately appears.
+    accent_check=False drops the accented-letter category likewise (the
+    pre-anglicization commits legitimately carry FR prose)."""
     findings: list[Finding] = []
 
     def add(cat: str, m: re.Match, snippet: str) -> None:
@@ -153,6 +172,9 @@ def scan_text(
     if lexicon_check:
         for m in _LEXICON_RE.finditer(text):
             add("lexicon", m, m.group(0))
+    if accent_check:
+        for m in _ACCENT_WORD_RE.finditer(text):
+            add("accents", m, m.group(0))
 
     return findings
 

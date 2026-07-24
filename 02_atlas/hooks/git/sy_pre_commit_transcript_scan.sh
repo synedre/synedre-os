@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
 # hook-pre-commit-transcript-scan.sh — PreToolUse Bash
 #
-# Avant `git commit`, scanne le transcript JSONL de la session courante pour
-# détecter les erreurs récurrentes (creds, paths, flags) et BLOQUE le commit
-# tant qu'aucune mémoire feedback_* n'a été gravée pour couvrir la rechute
-# probable. Applique la doctrine .
+# Before a `git commit`, scans the current session's JSONL transcript to
+# detect recurring errors (creds, paths, flags) and BLOCKS the commit as
+# long as no feedback_* memory has been engraved to cover the likely
+# relapse. Applies the doctrine .
 #
-# Anti-boucle : marker /tmp/claude-pre-commit-scanned-<session>-<hits-hash>.
-# 1ère détection → block. 2e tentative avec mêmes hits → laisse passer (Claude
-# a vu l'avertissement et a décidé de procéder).
+# Anti-loop: marker /tmp/claude-pre-commit-scanned-<session>-<hits-hash>.
+# 1st detection -> block. 2nd attempt with the same hits -> let it through
+# (Claude has seen the warning and decided to proceed).
 #
-# Skips :
-#   - commande n'est pas un `git commit` (ou est un --amend / commit-tree)
-#   - pas de transcript_path lisible
-#   - aucune ligne d'erreur dans le transcript
+# Skips:
+#   - command is not a `git commit` (or is an --amend / commit-tree)
+#   - no readable transcript_path
+#   - no error line in the transcript
 #
-# Sortie JSON systemMessage / decision=block.
+# JSON output systemMessage / decision=block.
 
 set -uo pipefail
 PAYLOAD=$(cat 2>/dev/null || true)
 
-# Filtre tool_name=Bash + extraction command + transcript_path
+# Filter tool_name=Bash + extract command + transcript_path
 read -r TOOL_NAME CMD TRANSCRIPT SESSION < <(printf '%s' "$PAYLOAD" | python3 -c '
 import json, sys
 try:
@@ -37,24 +37,24 @@ except Exception:
 
 [ "$TOOL_NAME" = "Bash" ] || exit 0
 CMD_DECODED=$(printf '%s' "$CMD" | sed 's/<SP>/ /g')
-# Durcissement #380 (Lovelace) : capter `git commit` même avec flags intercalés
-# (`git -c core.hooksPath=... commit`), même classe de bypass que le hook coverage.
+# Hardening #380 (Lovelace): catch `git commit` even with interleaved flags
+# (`git -c core.hooksPath=... commit`), same bypass class as the coverage hook.
 echo "$CMD_DECODED" | grep -qE '\bgit[[:space:]]+([^[:space:]]+[[:space:]]+)*commit\b' || exit 0
 echo "$CMD_DECODED" | grep -qE -- '--amend|commit-tree' && exit 0
 [ -n "$TRANSCRIPT" ] && [ -r "$TRANSCRIPT" ] || exit 0
 
-# Scan transcript : extraire stdout/stderr UNIQUEMENT des vraies sorties de commande
-# (.toolUseResult, lignes type:"user" du transcript), grep patterns d'erreur récurrentes.
-# Limiter à 10 hits pour ne pas exploser le reason.
+# Transcript scan: extract stdout/stderr ONLY from real command outputs
+# (.toolUseResult, type:"user" lines of the transcript), grep recurring error patterns.
+# Cap at 10 hits so the reason does not blow up.
 #
-# IMPORTANT (fix faux positif) : on ne scanne PAS .attachment.stdout — c'est là que vivent
-# les contextes injectés par les hooks (SessionStart injecte les scars qualifiées
-# via sy_scars_inject.py, qui contiennent des mots comme « fatal:true »). L'ancienne
-# requête `.. | objects | select(has("stdout"))` descendait partout et matchait ces
-# scars → block à chaque session portant une scar avec « fatal ». has("toolUseResult")
-# cible les seules sorties de commande Bash (sur 6 transcripts, 100% des toolUseResult
-# proviennent d'un tool_use name:"Bash"). La grep anti-bruit sur la signature du hook
-# elle-même est devenue morte (ses outputs vont en .attachment, jamais scannés).
+# IMPORTANT (false-positive fix): we do NOT scan .attachment.stdout — that is where
+# the contexts injected by the hooks live (SessionStart injects the qualified scars
+# via sy_scars_inject.py, and they contain words like "fatal:true"). The old
+# query `.. | objects | select(has("stdout"))` descended everywhere and matched those
+# scars -> block on every session carrying a scar with "fatal". has("toolUseResult")
+# targets only the Bash command outputs (across 6 transcripts, 100% of toolUseResult
+# entries come from a tool_use name:"Bash"). The anti-noise grep on the hook's own
+# signature has become dead code (its outputs go to .attachment, never scanned).
 HITS=$(jq -r '
   select(has("toolUseResult"))
   | .toolUseResult
@@ -68,23 +68,23 @@ if [ -z "$HITS" ]; then
   exit 0
 fi
 
-# Marker session-level : 1 block max par session (peu importe le set de hits,
-# qui mutate avec les outputs du hook lui-même dans le transcript).
+# Session-level marker: at most 1 block per session (whatever the hit set,
+# which mutates with the hook's own outputs in the transcript).
 MARKER="/tmp/claude-pre-commit-scanned-${SESSION}"
 
 if [ -f "$MARKER" ]; then
-  # 2e tentative : Claude a déjà vu le warning, on laisse passer en warn
+  # 2nd attempt: Claude has already seen the warning, let it through as a warn
   inner=$(printf '%s' "$HITS" | python3 -c 'import sys, json; s=json.dumps(sys.stdin.read()); print(s[1:-1])')
   cat <<EOF
-{"systemMessage": "⚠️  Pre-commit scan : commit autorisé malgré erreurs transcript non-acknowledgées (anti-boucle).\n${inner}"}
+{"systemMessage": "⚠️  Pre-commit scan: commit allowed despite unacknowledged transcript errors (anti-loop).\n${inner}"}
 EOF
   exit 0
 fi
 
-# 1ère détection : poser le marker + bloquer
+# 1st detection: set the marker + block
 touch "$MARKER"
 inner=$(printf '%s' "$HITS" | python3 -c 'import sys, json; s=json.dumps(sys.stdin.read()); print(s[1:-1])')
 cat <<EOF
-{"decision": "block", "reason": "📋 Pre-commit scan transcript — erreurs récurrentes détectées dans la session.\n\nGrep des stdout/stderr (max 10) :\n${inner}\n\nAvant de commiter : vérifier que chaque pattern a une mémoire feedback_* ou reference_* couvrant la valeur canonique (creds, path, user…). Sinon graver une mémoire dans ${HOME}/.claude/projects/-home-ubuntu-synedre-os/memory/ et la pointer depuis MEMORY.md.\n\nRelancer le même git commit pour passer (anti-boucle : 2e tentative laissée passer)."}
+{"decision": "block", "reason": "📋 Pre-commit transcript scan — recurring errors detected in the session.\n\nGrep of stdout/stderr (max 10):\n${inner}\n\nBefore committing: check that each pattern has a feedback_* or reference_* memory covering the canonical value (creds, path, user...). Otherwise engrave a memory in ${HOME}/.claude/projects/-home-ubuntu-synedre-os/memory/ and point to it from MEMORY.md.\n\nRerun the same git commit to pass (anti-loop: 2nd attempt is let through)."}
 EOF
 exit 0
