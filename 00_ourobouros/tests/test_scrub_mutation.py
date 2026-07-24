@@ -114,6 +114,12 @@ MUTANTS = [
      'from synedre.ac_entities.base import _esc\n',
      ["ac_entities", "sy_entities", "synedre."],
      ["from sy_entity_base import _esc"]),
+    # same target, BARE form (no 'synedre.' package prefix) — a facade one
+    # level up from the monolith root imports it this way.
+    ("import_path_remap_bare",
+     'from ac_entities.base import _esc\n',
+     ["ac_entities", "sy_entities."],
+     ["from sy_entity_base import _esc"]),
     # private refs — brain links + local-only CLAUDE.md
     ("private_ref_brain_link",
      '# cf [[feedback_run_vs_chantier]] section 2\n',

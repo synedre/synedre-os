@@ -275,6 +275,7 @@ _DEFAULT_IMPORT_MAP = (
     # its packaged path here — the integration test's flat-import check is the
     # backstop when one is forgotten)
     ("synedre.sy_entities.base", "sy_entity_base"),
+    ("sy_entities.base", "sy_entity_base"),  # bare form (no 'synedre.' package prefix)
     ("synedre.sy_pg_contract", "sy_pg_contract"),
     ("synedre.sy_env", "sy_env"),
     ("synedre.db", "sy_db"),

@@ -1148,10 +1148,6 @@
   "            print(f\"\\n  🫂 Winnicott watches over the engine:\\n     « {note} »\")\n"
  ],
  [
-  "sy_entities.base — Classe Entity générique.\n",
-  "sy_entities.base — Generic Entity class.\n"
- ],
- [
   "Implémente le CRUD et le pipeline de validation pour les tables sy_*.\nLes classes filles overrident `validate()` avec les règles métier.\n",
   "Implements CRUD and the validation pipeline for the sy_* tables.\nChild classes override `validate()` with the business rules.\n"
  ],
@@ -1586,5 +1582,121 @@
  [
   "        prompt = \" \".join(argv[1:]) or \"Réponds uniquement: OK\"\n",
   "        prompt = \" \".join(argv[1:]) or \"Reply only: OK\"\n"
+ ],
+ [
+  "sy_entity_base — Classe Entity générique.\n",
+  "sy_entity_base — Generic Entity class.\n"
+ ],
+ [
+  "     `sy_figma_source` (sy_hub, schéma shyrka).\n",
+  "     `sy_figma_source` (sy_hub, shyrka schema).\n"
+ ],
+ [
+  "     en DB. Inchangé + pas --force → no-op (idempotent).\n",
+  "     in DB. Unchanged + no --force → no-op (idempotent).\n"
+ ],
+ [
+  "     frames dont le nom commence par `frame_filter` (défaut `✓` = « prêt »),\n     filtrées sur `page_filter` si fourni. Convention de nom :\n",
+  "     frames whose name starts with `frame_filter` (default `✓` = \"ready\"),\n     filtered on `page_filter` if provided. Naming convention:\n"
+ ],
+ [
+  "     (ex `/shop`), le reste = label. Sans `/…` → route None (frame signalée).\n",
+  "     (e.g. `/shop`), the rest = label. Without `/…` → route None (frame flagged).\n"
+ ],
+ [
+  "     retry+backoff sur 429), télécharge chaque PNG.\n  5. Écrit `automation/figma/<tenant>/<slug-frame>.png` + un\n",
+  "     retry+backoff on 429), downloads each PNG.\n  5. Writes `automation/figma/<tenant>/<slug-frame>.png` + a\n"
+ ],
+ [
+  "4 invariants (cf , appliqués ici même\nsi ce n'est pas un moteur SEO — même doctrine de robustesse) :\n  HOMOGÈNE (un seul chemin de code) · IDEMPOTENT (replace-not-append PNG+manifest,\n  re-run sans changement = même état) · MULTI-TENANT (config lue en DB, zéro\n  tenant en dur — seul le seed nomme <TENANT>) · déterministe (mêmes entrées →\n  même sortie, sauf évolution réelle du fichier Figma).\n",
+  "4 invariants (cf , applied here even\nthough this isn't an SEO engine — same robustness doctrine):\n  HOMOGENEOUS (a single code path) · IDEMPOTENT (replace-not-append PNG+manifest,\n  re-run with no change = same state) · MULTI-TENANT (config read from DB, zero\n  hardcoded tenant — only the seed names <TENANT>) · deterministic (same inputs →\n  same output, unless the Figma file actually changes).\n"
+ ],
+ [
+  "Ligne de gouvernance : Shyrka s'ARRÊTE au rapatriement. La traduction PNG →\n",
+  "Governance line: Shyrka STOPS at the pull. The PNG →\n"
+ ],
+ [
+  "un geste piloté par Claude, jamais automatisé.\n",
+  "a step driven by Claude, never automated.\n"
+ ],
+ [
+  "jamais commité, jamais loggué en clair.\n",
+  "never committed, never logged in plaintext.\n"
+ ],
+ [
+  "Cron (à installer par Alex — cf documentation/FIGMA_PULL_CRON.md) :\n",
+  "Cron (to be installed by the founder — see documentation/FIGMA_PULL_CRON.md):\n"
+ ],
+ [
+  "MAX_BACKOFF_S = 60  # plafond dur : un Retry-After au-delà = signal d'un blocage\n",
+  "MAX_BACKOFF_S = 60  # hard ceiling: a Retry-After beyond this = signal of a block\n"
+ ],
+ [
+  "    \"\"\"Slug kebab-case ascii pour nom de fichier PNG (retire aussi le préfixe convention).\"\"\"\n",
+  "    \"\"\"ASCII kebab-case slug for the PNG filename (also strips the convention prefix).\"\"\"\n"
+ ],
+ [
+  "    \"\"\"Sépare le reste du nom de frame (après le préfixe ✓) en (route, label).\n",
+  "    \"\"\"Splits the rest of the frame name (after the ✓ prefix) into (route, label).\n"
+ ],
+ [
+  "    Convention : `✓ /route Label libre` → le premier token commençant par `/`\n",
+  "    Convention: `✓ /route Label libre` → the first token starting with `/`\n"
+ ],
+ [
+  "    Pas de token `/…` → (None, texte nettoyé) : frame « non routée », à signaler.\n",
+  "    No `/…` token → (None, cleaned text): frame \"unrouted\", to be flagged.\n"
+ ],
+ [
+  "    \"\"\"Lit le token Figma depuis .env — jamais loggué, jamais en DB.\"\"\"\n",
+  "    \"\"\"Reads the Figma token from .env — never logged, never stored in DB.\"\"\"\n"
+ ],
+ [
+  "            \"FIGMA_CODEMYSHOP_TOKEN manquant dans .env — dépose le token Figma \"\n",
+  "            \"FIGMA_CODEMYSHOP_TOKEN missing from .env — add the Figma token \"\n"
+ ],
+ [
+  "            # Paywall / quota non-transitoire : Figma renvoie un 429 avec un\n            # Retry-After de plusieurs jours + un lien d'upgrade sur les comptes\n            # gratuits (plan-tier 'starter'). Inutile de retry/sleep — on échoue\n            # net avec un message actionnable plutôt que de geler le process.\n",
+  "            # Non-transient paywall / quota: Figma returns a 429 with a\n            # Retry-After of several days + an upgrade link on free\n            # accounts (plan-tier 'starter'). No point retrying/sleeping — fail\n            # outright with an actionable message instead of freezing the process.\n"
+ ],
+ [
+  "    raise RuntimeError(f\"Figma API {path} injoignable après {MAX_RETRIES} tentatives ({last_err})\")\n",
+  "    raise RuntimeError(f\"Figma API {path} unreachable after {MAX_RETRIES} attempts ({last_err})\")\n"
+ ],
+ [
+  "    dont le nom commence par `frame_filter`, filtrées par `page_filter` si fourni.\"\"\"\n",
+  "    whose name starts with `frame_filter`, filtered by `page_filter` if provided.\"\"\"\n"
+ ],
+ [
+  "            return frames  # page non ciblée : ignore toute sa descendance\n",
+  "            return frames  # page not targeted: ignore all its descendants\n"
+ ],
+ [
+  "# ── Téléchargement images (batché) ───────────────────────────────────────\n",
+  "# ── Image download (batched) ──────────────────────────────────────────────\n"
+ ],
+ [
+  "        _log(f\"{tenant}: file_key placeholder ({file_key}) — seed non finalisé, skip.\")\n",
+  "        _log(f\"{tenant}: file_key placeholder ({file_key}) — seed not finalized, skip.\")\n"
+ ],
+ [
+  "        _log(f\"{tenant}: inchangé (lastModified={last_modified}), skip.\")\n        return \"inchangé\"\n",
+  "        _log(f\"{tenant}: unchanged (lastModified={last_modified}), skip.\")\n        return \"unchanged\"\n"
+ ],
+ [
+  "        _log(f\"{tenant}: 0 frame '{source['frame_filter']}*' trouvée \"\n",
+  "        _log(f\"{tenant}: 0 frame '{source['frame_filter']}*' found \"\n"
+ ],
+ [
+  "    _log(f\"{tenant}: {len(frames)} frame(s) prête(s) trouvée(s).\")\n",
+  "    _log(f\"{tenant}: {len(frames)} ready frame(s) found.\")\n"
+ ],
+ [
+  "        description=\"Shyrka — rapatrie les frames Figma « prêtes » en PNG + manifest.json.\",\n",
+  "        description=\"Shyrka — pulls 'ready' Figma frames into PNG + manifest.json.\",\n"
+ ],
+ [
+  "    ap.add_argument(\"--force\", action=\"store_true\", help=\"ignore le delta-gate (re-pull même si inchangé)\")\n    ap.add_argument(\"--dry-run\", action=\"store_true\", help=\"liste les frames retenues, aucune écriture\")\n",
+  "    ap.add_argument(\"--force\", action=\"store_true\", help=\"ignore the delta-gate (re-pull even if unchanged)\")\n    ap.add_argument(\"--dry-run\", action=\"store_true\", help=\"list the selected frames, no writes\")\n"
  ]
 ]

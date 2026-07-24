@@ -1,5 +1,5 @@
 """
-sy_entities.base — Generic Entity class.
+sy_entity_base — Generic Entity class.
 
 Implements CRUD and the validation pipeline for the sy_* tables.
 Child classes override `validate()` with the business rules.
