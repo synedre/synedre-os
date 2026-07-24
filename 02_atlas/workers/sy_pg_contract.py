@@ -58,7 +58,7 @@ if __name__ == "__main__":
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).parent.parent.resolve()))
-    from synedre.sy_entities.base import _run_sql_read
+    from sy_entity_base import _run_sql_read
     ok, mism = verify_parity(_run_sql_read)
     if ok:
         print(f"✅ golden contract verified — {len(CONTRACT)} byte-identical cases (docker-psql)")

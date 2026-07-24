@@ -1,22 +1,22 @@
 """
-synedre/db.py — PostgreSQL connection helper for sandbox agents.
+synedre/db.py — PostgreSQL connection helper for sandboxed agents.
 
-Why this file exists (scar 2026-05-23, jobsite #94):
+Why this file exists:
   The sub-claudes spawned by sy_task_worker via atlas-spawn-claude.mjs run
   in a Linux host context (not inside Docker). They have no access to:
     - the internal Docker hostname `sy_postgres` (not resolvable from the host)
     - the Docker socket (missing permissions for `docker exec sy_postgres psql`)
 
   Solution: the sy_postgres container exposes its port 5432 on 127.0.0.1:5433
-  host-side. The TCP connection localhost:5433 is reachable from any host
-  process, including a sub-claude spawned by the task worker.
+  on the host side. The TCP connection localhost:5433 is reachable from any
+  host process, including a sub-claude spawned by the task worker.
 
-  This `get_conn()` helper must be preferred over any `docker exec sy_postgres psql`
+  This `get_conn()` helper should be preferred over any `docker exec sy_postgres psql`
   in Python scripts used by agents. It is self-contained — it does not depend
-  on sy_entities/base.py (which itself uses docker exec for its connections).
+  on sy_entities/base.py (which itself does docker exec for its connections).
 
-Usage:
-    from synedre.db import get_conn
+Usage :
+    from sy_db import get_conn
     conn = get_conn()
     with conn.cursor() as cur:
         cur.execute("SELECT now()")
@@ -32,7 +32,7 @@ Environment variables (all optional except PG_PASSWORD):
 
 These vars are injected automatically by atlas-spawn-claude.mjs into the env
 of every sub-claude spawned by the task worker (except PG_PASSWORD, inherited
-via process.env of the cron that starts sy_task_worker.py).
+via process.env from the cron that starts sy_task_worker.py).
 """
 
 import os

@@ -11,11 +11,25 @@
 # === Core engine facades (core/shyrka) ===
 synedre/db.py                          ->  core/shyrka/sy_db.py
 synedre/ac_env.py                      ->  core/shyrka/sy_env.py
+synedre/ac_entities/base.py            ->  core/shyrka/sy_entity_base.py
+synedre/ac_logger.py                   ->  core/shyrka/sy_logger.py
+
+# === Core engine ORGANS (core/shyrka) — Alex 2026-07-24: reflex / pulse /
+# proprioception are organs OF the engine (called by the harness or by other
+# modules), not automates. Criterion: an organ is CALLED, an 02_atlas worker
+# is an entry point that orchestrates work. Cf ADR-0003 addendum.
+synedre/ac_reflex.py                   ->  core/shyrka/sy_reflex.py
+synedre/ac_cron_beat.py                ->  core/shyrka/sy_cron_beat.py
+synedre/ac_conscience_health.py        ->  core/shyrka/sy_conscience_health.py
+
+# === East — LLM agent execution contract (03_sun_wukong) ===
+synedre/ac_agent_runner.py             ->  03_sun_wukong/sy_agent_runner.py
 
 # === West workers — SRE guards (02_atlas/workers) ===
 synedre/ac_pg_contract.py              ->  02_atlas/workers/sy_pg_contract.py
 synedre/ac_session_split.py            ->  02_atlas/workers/sre/sy_session_split.py
 synedre/ac_session_handoff_resume.py   ->  02_atlas/workers/sre/sy_session_handoff_resume.py
+synedre/ac_session_start.py            ->  02_atlas/workers/sre/sy_session_start.py
 
 # === West hooks — git domain (02_atlas/hooks/git) ===
 scripts/hook-no-rebase-on-shared-branch.sh    ->  02_atlas/hooks/git/sy_no_rebase_on_shared_branch.sh
@@ -30,6 +44,13 @@ scripts/hook-stop-uncommitted-warn.sh         ->  02_atlas/hooks/claude/sy_stop_
 scripts/hook-cron-llm-block.sh                ->  02_atlas/hooks/claude/sy_cron_llm_block.sh
 
 # === EXPLICITLY EXCLUDED (kept here as memory, not copied) ===
-# synedre/ac_session_start.py, ac_logger, ac_healthcheck, ac_entities/  -> T3.3 (coupled facades)
-# bootstrap.sql, vaisseau_mere_ac hardcoded schema                       -> T3.2
-# core/shyrka/brain/                                                     -> private moat, gitignored
+# ac_doc_drift_watch.py -> deferred doc-auto batch: imports 2 functions from
+#   ac_doc_publish.py (1362L, 13 tenant refs — too coupled for this wave)
+# core/shyrka/brain/    -> private moat, gitignored
+#
+# NEXT WAVE (dangling lazy imports of the T3.3 facades — all inside functions,
+# so the shipped modules import fine; they degrade gracefully until extracted):
+#   ac_hook_pg (logger), ac_entities/chantier.py + ac_llm_cost +
+#   ac_event_persistor + ac_runner_synedre (agent_runner), ac_agent_call
+#   (conscience_health), ac_pg_pool (entity base), ac_cron_deadman (cron_beat),
+#   ac_doc_publish + ac_doc_drift_watch (doc-auto batch)
