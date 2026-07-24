@@ -42,13 +42,13 @@ CATEGORIES: list[tuple[str, list[str]]] = [
         "sy_user", "sy_claude_session", "sy_run", "sy_job_queue",
         "sy_task_run", "sy_autonomy_window",
     ]),
-    ("Chantier, travail & tâche", [
-        "sy_chantier", "sy_chantier_travail", "sy_chantier_agent",
-        "sy_chantier_claude_session", "sy_chantier_lock", "sy_chantier_readiness",
-        "sy_chantier_qa_run", "sy_chantier_relevance", "sy_chantier_tache",
-        "sy_chantier_tool", "sy_tache_dep", "sy_tache_iteration",
-        "sy_tache_skill", "sy_tache_tool", "sy_travail_agent",
-        "sy_travail_dep", "sy_travail_review",
+    ("Jobsite, work order & task", [
+        "sy_jobsite", "sy_jobsite_work_order", "sy_jobsite_agent",
+        "sy_jobsite_claude_session", "sy_jobsite_lock", "sy_jobsite_readiness",
+        "sy_jobsite_qa_run", "sy_jobsite_relevance", "sy_jobsite_task",
+        "sy_jobsite_tool", "sy_task_dep", "sy_task_iteration",
+        "sy_task_skill", "sy_task_tool", "sy_work_order_agent",
+        "sy_work_order_dep", "sy_work_order_review",
     ]),
     ("Agents", [
         "sy_agents", "sy_agent_activity", "sy_agent_event",
@@ -56,14 +56,14 @@ CATEGORIES: list[tuple[str, list[str]]] = [
         "sy_agent_tool", "sy_agent_xp", "sy_agent_xp_history", "sy_ai_routing",
     ]),
     ("Automates", [
-        "sy_automates", "sy_automate_agents", "sy_automate_conduites",
+        "sy_automates", "sy_automate_agents", "sy_automate_playbooks",
         "sy_automate_llm_run", "sy_automate_logs",
     ]),
     ("Cron", ["sy_cron_heartbeat"]),
-    ("Doctrine, cicatrices & introspection", [
+    ("Doctrine, scars & introspection", [
         "sy_conscience_health", "sy_doc_coverage", "sy_doc_drift",
         "sy_doc_external_review", "sy_doc_gap", "sy_doc_public_mirror",
-        "sy_cicatrices", "sy_header_shell_health_history", "sy_reflex",
+        "sy_scars", "sy_header_shell_health_history", "sy_reflex",
         "sy_reflex_audit", "sy_reflex_proposal",
     ]),
     ("Lexicon & LLM pricing", ["sy_lexicon", "sy_llm_pricing", "sy_ai_usage"]),
@@ -209,7 +209,7 @@ def render(tables, table_comments, col_comments, funcs) -> str:
         out.append("")
         out.append(
             "PL/pgSQL guards that encode the orchestrator's runtime doctrine "
-            "(chantier gates, append-only audit, updated_at). Kept auto-contained "
+            "(jobsite gates, append-only audit, updated_at). Kept auto-contained "
             "in the distro: one function that coupled to a comm-only table was "
             "dropped with its trigger."
         )
@@ -261,12 +261,12 @@ def _func_role(name: str) -> str:
     roles = {
         "is_safe_regex": "validates a stored regex pattern (CHECK on sy_reflex).",
         "fn_set_updated_at": "trigger: bumps updated_at on row change.",
-        "fn_chantier_done_requires_tasks_complete": "gate: a chantier may not go `done` with open tasks.",
-        "fn_travail_depends_on_readonly": "guard: deprecated depends_on column is read-only (use sy_travail_dep).",
-        "guard_chantier_archive_requires_kpi_reached": "gate: a chantier with an outcome_kpi cannot archive until the KPI is reached.",
-        "guard_chantier_done_requires_guardrail": "gate: a chantier must transition through status, never INSERT as done/archived.",
-        "guard_chantier_done_requires_outcome_proof": "gate: closing a chantier requires an outcome proof.",
-        "set_cicatrice_guardrail_default": "trigger: defaults a cicatrice's guardrail at INSERT.",
+        "fn_jobsite_done_requires_tasks_complete": "gate: a jobsite may not go `done` with open tasks.",
+        "fn_work_order_depends_on_readonly": "guard: deprecated depends_on column is read-only (use sy_work_order_dep).",
+        "guard_jobsite_archive_requires_kpi_reached": "gate: a jobsite with an outcome_kpi cannot archive until the KPI is reached.",
+        "guard_jobsite_done_requires_guardrail": "gate: a jobsite must transition through status, never INSERT as done/archived.",
+        "guard_jobsite_done_requires_outcome_proof": "gate: closing a jobsite requires an outcome proof.",
+        "set_scar_guardrail_default": "trigger: defaults a scar's guardrail at INSERT.",
     }
     return roles.get(name, "—")
 

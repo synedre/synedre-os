@@ -18,7 +18,7 @@ The pipeline is **whitelist-driven** and **scrub-before-write**:
 
 - **Whitelist-driven** (`publish-whitelist.txt`). The writer copies ONLY the
   files listed, mapping monolith path → OSS path. Never `cp -r` a directory then
-  scrub it — the whitelist drives inclusion (cicatrice #618).
+  scrub it — the whitelist drives inclusion (scar #618).
 - **Scrub-before-write**. `sy_scrub` transforms the SOURCE, then the writer
   writes the dest. The output is never scrubbed after the fact.
 - **Defense in depth**. A leak gate checks the staged output regardless of the
@@ -33,7 +33,7 @@ The pipeline is **whitelist-driven** and **scrub-before-write**:
 | Module | Role | Camp |
 |---|---|---|
 | `sy_extract.py` | Writer: copies the whitelisted files, scrubbing each before write. | East (producer) |
-| `sy_scrub.py` | 7 ordered, idempotent transforms (headers, codenames, paths, schema, prefixes, pg_dump artifacts). Pure functions. | East |
+| `sy_scrub.py` | 10 ordered, idempotent transforms (headers, codenames, paths, schema, prefixes, pg_dump artifacts, SQL messages, FR→EN lexicon, COMMENT overlay). Pure functions. | East |
 | `sy_leak_gate.py` | Detector: FAILs on residual leak (codename / path / schema / secret). Secrets are masked `<SECRET>` so the detector never leaks the value. | West (validator) |
 | `sy_publish_audit.py` | Tree + git-history audit: a leak removed from the working tree still lives in history. | West |
 | `sy_db_schema_doc.py` | Layer 2 doc generator: `bootstrap.sql` → `documentation/db-schema.md` (auto, never hand-edited). | — |
@@ -73,10 +73,31 @@ incremental noise.
 **Why a whitelist, not the whole schema.** The live schema (`vaisseau_mere_ac`)
 mixes 354 tables — Synedre OS engine, CodeMyShop enterprise, PrestaShop
 ecommerce, tenant specifics. The schema name filters nothing. The 69-table
-whitelist is the **orchestrator heart** only: sessions, chantier/task, agents,
-automates, cron, doctrine/cicatrices, doc-drift, lexicon, llm-pricing, pentest,
-seo-engine, reflex. `ps_ac_*` / `cs_*` ecommerce is excluded by construction
-(except 3 `ps_ac_*` engine concepts the scrub renames to `sy_*`).
+whitelist is the **orchestrator heart** only: sessions, jobsite/work-order/task,
+agents, automates, cron, doctrine/scars, doc-drift, lexicon, llm-pricing,
+pentest, seo-engine, reflex. `ps_ac_*` / `cs_*` ecommerce is excluded by
+construction (except 3 `ps_ac_*` engine concepts the scrub renames to `sy_*`).
+
+## Lexicon (FR → EN, building-trade semantics)
+
+The monolith's orchestration vocabulary is French building-trade slang. The
+public distro keeps the metaphor but speaks English (decided 2026-07-24):
+`chantier`→`jobsite`, `travail`→`work_order`, `tache`→`task`,
+`cicatrice`→`scar`, `conduite`→`playbook` — `agent` stays `agent` (an AI agent,
+never "crew"/"foreman"; a deterministic automate is a *worker*, ADR-0003).
+Three transforms carry it:
+
+- `translate_sql_messages` — curated exact-string map for the FR RAISE texts
+  and in-function comments of the engine functions.
+- `translate_lexicon` — word-level rename, longest-first, snake_case-aware
+  (applies to identifiers everywhere: tables, columns, triggers, prose).
+- `translate_db_comments` — **fail-closed** curated overlay
+  (`comments-en.json`): every `COMMENT ON` is either replaced by its reviewed
+  EN text or dropped. Unreviewed prose never ships.
+
+The gate enforces the result: a `lexicon` finding on any tracked code file
+fails the release (off in the history audit — the pre-rename vocabulary
+legitimately lives in the commits that performed the rename).
 
 ### Regenerating `bootstrap.sql`
 
@@ -87,11 +108,14 @@ DB address). To regenerate, reproduce its 9 steps:
    the 69 core tables (see the `TABLES` list; it mirrors the categories in
    `documentation/db-schema.md`).
 2. `pg_get_functiondef` over the schema's functions, scrubbed.
-3. Scrub both via `sy_scrub.scrub_text()` (7 transforms; `vaisseau_mere_ac`→
-   `shyrka`, `ps_ac_`→`sy_`, codenames→`<TENANT>`, pg_dump artifacts stripped).
+3. Scrub both via `sy_scrub.scrub_text()` (10 transforms; `vaisseau_mere_ac`→
+   `shyrka`, `ps_ac_`→`sy_`, codenames→`<TENANT>`, pg_dump artifacts stripped,
+   FR→EN lexicon + SQL messages, COMMENT overlay — pass
+   `--comments=comments-en.json`; a NEW comment in the dump must first get its
+   curated EN entry there, else it is dropped).
 4. Keep only the functions the 69 tables reference (CHECK / trigger / default);
    drop the two that break auto-containment:
-   - `cascade_resolved_inbox_on_chantier_done` — its body references
+   - `cascade_resolved_inbox_on_jobsite_done` — its body references
      `sy_inbox_emails` (a comm table, not dumped); its trigger is dropped too.
    - `_audit_log_immutable` — orphan (its table is not in the 69).
 5. Drop the 2 orphan FKs (`sy_agent_event.id_atlas_email → sy_atlas_email`,

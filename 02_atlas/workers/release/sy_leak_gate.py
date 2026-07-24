@@ -17,6 +17,10 @@ Detection categories:
   path           /home/ubuntu absolute path.
   schema         vaisseau_mere_ac / vaisseau_mere.
   private_ref    [[feedback_*]] brain links, CLAUDE.md (local-only here).
+  lexicon        FR orchestration vocabulary (chantier/travail/tache/cicatrice/
+                 conduite) — a wording defect, not a secret; the published tree
+                 must be international (EN: jobsite/work_order/task/scar/
+                 playbook). Off in the history audit.
 
 Scope (the "what gets published" boundary) — scan_tracked_code, the CLI default:
   Scanned  — git-tracked CODE files only (core/, 02_atlas/hooks/,
@@ -88,17 +92,33 @@ _DEFAULT_SCHEMA_TOKENS = (
 )
 _MEMORY_LINK_RE = re.compile(r"\[\[[a-zA-Z0-9_]+\]\]")
 _CLAUDEMD_RE = re.compile(r"CLAUDE\.md", re.IGNORECASE)
+# FR orchestration vocabulary (pre-rename, decided 2026-07-24: jobsite /
+# work_order / task / scar / playbook). Not a secret — a WORDING defect: the
+# published tree must be international. Boundaries mirror sy_scrub's lexicon
+# pass (underscore is a boundary; letters incl. accented are not, so
+# 'moustache' / 'detache' never fire). Disabled for the HISTORY audit
+# (sy_publish_audit): the pre-rename vocabulary legitimately lives in the
+# commits that performed the rename.
+_LEXICON_RE = re.compile(
+    r"(?<![A-Za-zÀ-ÿ0-9])(?:chantiers?|tra(?:vail|vaux)|t[aâ]ches?|"
+    r"cicatrices?|conduites?)(?![A-Za-zÀ-ÿ0-9])",
+    re.IGNORECASE,
+)
 
 
 def _line_of(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + 1
 
 
-def scan_text(text, denylist, *, path_literals=None, schema_tokens=None) -> list[Finding]:
+def scan_text(
+    text, denylist, *, path_literals=None, schema_tokens=None, lexicon_check=True,
+) -> list[Finding]:
     """Detect leaks in a single text blob. Secret matches are masked to
     <SECRET> in the snippet; the raw secret value never leaves this function.
     path_literals / schema_tokens override the monolith defaults (neutral fixtures
-    inject their own so the test stays token-free in the public repo)."""
+    inject their own so the test stays token-free in the public repo).
+    lexicon_check=False drops the FR-vocabulary category — used by the history
+    audit, where the pre-rename vocabulary legitimately appears."""
     findings: list[Finding] = []
 
     def add(cat: str, m: re.Match, snippet: str) -> None:
@@ -130,6 +150,9 @@ def scan_text(text, denylist, *, path_literals=None, schema_tokens=None) -> list
         add("private_ref", m, m.group(0))
     for m in _CLAUDEMD_RE.finditer(text):
         add("private_ref", m, m.group(0))
+    if lexicon_check:
+        for m in _LEXICON_RE.finditer(text):
+            add("lexicon", m, m.group(0))
 
     return findings
 

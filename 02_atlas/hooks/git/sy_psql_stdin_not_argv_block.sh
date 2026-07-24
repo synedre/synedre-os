@@ -3,12 +3,12 @@
 # hook-psql-stdin-not-argv-block.sh — Hook PreToolUse Edit|Write BLOQUANT.
 #
 # Matérialise l'invariant du test synedre/tests/test_psql_stdin_not_argv.py
-# (chantier psql-stdin-migration, #530) : le SQL destiné à psql passe par
+# (jobsite psql-stdin-migration, #530) : le SQL destiné à psql passe par
 # STDIN (input=sql), JAMAIS par argv ("-c", sql). L'erreur se voit À L'ÉCRITURE,
 # pas en attendant le test — sinon la dette repousse
 # ().
 #
-# CICATRICE (2026-07-20, run GLM #896) : `docker exec ... psql -c "<sql>"`
+# SCAR (2026-07-20, run GLM #896) : `docker exec ... psql -c "<sql>"`
 # fait porter tout le payload par la LIGNE DE COMMANDE. Au-delà d'ARG_MAX
 # l'appel échoue en « Argument list too long » et l'event part à la poubelle
 # EN SILENCE — le cockpit perdait exactement les GROS events (longues
@@ -23,7 +23,7 @@
 # SCOPE — .py UNIQUEMENT, comme le test. Les appels psql des modules Node
 # (.cjs, ex sy_figma_capture.cjs:sqlRead) restent en '-c', sql sur des
 # requêtes de lecture bornées ; ils ne sont PAS concernés par ARG_MAX de la
-# même façon et sont hors champ du chantier. Étendre le hook à ces fichiers
+# même façon et sont hors champ du jobsite. Étendre le hook à ces fichiers
 # casserait ce garde pour un problème qu'il ne vise pas.
 #
 # CE QU'IL NE PEUT PAS GARDER : que le docker exec porte bien son flag -i

@@ -6,7 +6,7 @@ Reads publish-whitelist.txt (a `source -> dest` map), scrubs each source with
 sy_scrub.scrub_text, and writes the dest into the OSS repo.
 
 This is the ONLY entry point that copies monolith code into the public repo, and
-it copies ONLY what the whitelist lists. cicatrice #876 / #618: the whitelist is
+it copies ONLY what the whitelist lists. scar #876 / #618: the whitelist is
 read by the writer — never `cp -r` a directory then scrub it. Doctrine: scrub the
 SOURCE, then write (ADR-0001).
 

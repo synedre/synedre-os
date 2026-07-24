@@ -10,7 +10,7 @@ _Legend: 36/69 tables and 86 columns carry a COMMENT (the engine's doctrine, kep
 
 ### `sy_user`
 
-> Modèle utilisateur centralisé (inspiré Honcho) — remplace les memory/user_*.md éparpillés. Source unique pour contexte utilisateur injecté dans sessions Claude.
+> Centralized user model (inspired by Honcho) — replaces scattered memory/user_*.md files. Single source of user context injected into Claude sessions.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -22,11 +22,11 @@ _Legend: 36/69 tables and 86 columns carry a COMMENT (the engine's doctrine, kep
 | `updated_at` | timestamp with time zone | NOT NULL | now() |
 
 Column notes:
-- **`dimensions`** — Arbre JSONB : profile, communication_style, schedule, skills, history, preferences, private_only_for_alex.
+- **`dimensions`** — JSONB tree: profile, communication_style, schedule, skills, history, preferences, private_only_for_alex.
 
 ### `sy_claude_session`
 
-> Index metadata des sessions Claude Code (.jsonl) — Phase UI-7 cockpit. Full content reste sur filesystem ~/.claude/projects/<project>/<uuid>.jsonl, accessible via endpoint streaming.
+> Metadata index of Claude Code sessions (.jsonl). Full content stays on the filesystem at ~/.claude/projects/<project>/<uuid>.jsonl, accessible via a streaming endpoint.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -47,7 +47,7 @@ Column notes:
 
 ### `sy_run`
 
-> Entité de premier rang RUN. Source unique de /hub/runs (runs-only). Les 2 sources (atlas-inbox via email intent=run, console via chat) écrivent ici. Les emails intent question/chantier/noise NE deviennent PAS des runs.
+> First-class RUN entity. Single source for /hub/runs (runs-only). Both sources (atlas-inbox via email intent=run, console via chat) write here. Emails with intent question/jobsite/noise do NOT become runs.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -65,11 +65,11 @@ Column notes:
 | `date_upd` | timestamp with time zone | NOT NULL | now() |
 
 Column notes:
-- **`source`** — Origine du run : atlas-inbox (email) | console (chat). Affiché en colonne Source.
-- **`trigger`** — Mécanisme déclencheur : email | chat | cron.
-- **`scope`** — Périmètre : shyrka | <codename tenant>. NULL si non dérivable (cas inbox).
-- **`ref_type`** — Type de la ref polymorphe : atlas_email (id_atlas_email) | brainstorm_job_thread (uuid thread console).
-- **`ref_id`** — Identifiant polymorphe : id_atlas_email pour atlas-inbox, uuid thread pour console.
+- **`source`** — Origin of the run: atlas-inbox (email) | console (chat). Shown in the Source column.
+- **`trigger`** — Triggering mechanism: email | chat | cron.
+- **`scope`** — Perimeter: shyrka | <tenant codename>. NULL if not derivable (inbox case).
+- **`ref_type`** — Type of the polymorphic ref: atlas_email (id_atlas_email) | brainstorm_job_thread (console thread uuid).
+- **`ref_id`** — Polymorphic identifier: id_atlas_email for atlas-inbox, thread uuid for console.
 
 ### `sy_job_queue`
 
@@ -86,7 +86,7 @@ Column notes:
 
 ### `sy_task_run`
 
-> Taches deleguees aux agents depuis cockpit /hub/ (Phase UI-1 synedre-os-cockpit, 2026-05-16). Worker daemon = Phase UI-2.
+> Tasks delegated to agents from the /hub/ cockpit. Executed by the worker daemon.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -116,16 +116,16 @@ Column notes:
 | `restore_reason` | text | — | — |
 
 Column notes:
-- **`codename`** — Slug unique kebab-case, identifie la run dans logs et URL /hub/runs/<codename>.
-- **`agent_codename`** — FK logique vers sy_agents.codename.
-- **`perimeter`** — JSON list de chemins fichiers/dirs autorises a l agent (sandboxing).
-- **`exit_criteria`** — Texte libre conditions de fin attendues par operateur.
+- **`codename`** — Unique kebab-case slug identifying the run in logs and at /hub/runs/<codename>.
+- **`agent_codename`** — Logical FK to sy_agents.codename.
+- **`perimeter`** — JSON list of file/directory paths the agent is allowed to touch (sandboxing).
+- **`exit_criteria`** — Free text: completion conditions expected by the operator.
 - **`status`** — pending | running | completed | failed | cancelled
-- **`output_log`** — Streamed stdout/stderr concat ephemere peut etre tronque.
+- **`output_log`** — Streamed concatenated stdout/stderr; ephemeral, may be truncated.
 
 ### `sy_autonomy_window`
 
-> Fenêtre autonomie par jour (dow 0=lundi..6=dimanche, aligné datetime.weekday()). start_hour->end_hour (wrap minuit si start>end). enabled=false coupe le démarrage ce jour. Édité par /autonomie + /hub/autonomie. Chantier autonomie-horaire.
+> Autonomy window per day (dow 0=Monday..6=Sunday, aligned with datetime.weekday()). start_hour->end_hour (wraps past midnight if start>end). enabled=false disables startup that day. Edited via /autonomie and /hub/autonomie.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -137,13 +137,13 @@ Column notes:
 | `date_upd` | timestamp with time zone | NOT NULL | now() |
 
 
-## Chantier, travail & tâche
+## Jobsite, work order & task
 
-### `sy_chantier`
+### `sy_jobsite`
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
-| `id_chantier` | integer | NOT NULL | — |
+| `id_jobsite` | integer | NOT NULL | — |
 | `codename` | character varying(64) | NOT NULL | — |
 | `title` | character varying(255) | NOT NULL | — |
 | `client_id` | character varying(32) | — | — |
@@ -189,24 +189,24 @@ Column notes:
 | `classification_report` | jsonb | — | — |
 
 Column notes:
-- **`archived_at`** — Soft archive. NULL = actif (filtre UI par défaut). Renseignée = archivé (RAG searchable préservé).
-- **`mission_letter`** — Lettre de mission markdown structurée (contexte/objectifs/scope/critères/contraintes/briefing-équipes). Optionnelle. Injectée conditionnellement dans persona + qa_run (travail #161).
-- **`scope`** — Périmètre projet (synedre|codemyshop-oss|codemyshop-enterprise|tenant|business). Distinct de client_id qui désigne le tenant cible. Affiché comme badge sur /hub/chantier.
-- **`preprod_test_plan`** — Markdown libre : URLs preprod à valider, commandes <TENANT>, checks visuels. Affiché par /chantier <codename> quand status=test. Doctrine review-chantier-only 2026-05-18.
-- **`ship_command`** — Commande exacte à exécuter pour clôturer le chantier (ex: ./ship synedre-os, ./ship <TENANT>-v2, ./ship all). Affiché par /chantier <codename> quand status=test.
-- **`external_contacts`** — CSV emails (ex: julien.tchoryk@<TENANT>.com,xavier.tostivint@<TENANT>.com) à surveiller proactivement par Marco Polo (agent veille). Cron sy_dream feature_8 scan sy_inbox_emails J-7 → matche → unpause + tâche @veille si activité.
-- **`auto_explode`** — Si TRUE et travail discovery du chantier passe done, déclenche pipeline LLM sy_chantier_explode_discovery pour créer les travaux Phase A/B/C automatiquement. Kill-switch DB doctrine 2026-05-20 chantier auto-explode-discovery.
-- **`qa_verdict`** — Verdict de l'orbite QA en phase test : green|red|incomplete|pending. green + auto-closable → done.
-- **`qa_proof_path`** — Chemin de la preuve QA 3 axes (sy_run_qa) produite par l'orbite — zéro faux-vert.
-- **`auto_deployed_at`** — Dernier ./deploy AUTO réussi lancé par sy_autonomie_tick (cible non-cliente). Throttle : le tick passe chaque heure dans la fenêtre 19h-4h et redéploierait sinon ~10×/nuit un chantier en test. Seul un deploy rc=0 tamponne — un échec doit pouvoir rejouer. NULL = jamais auto-déployé.
-- **`preferred_dows`** — Jours de semaine (0=lundi..6=dimanche, aligné datetime.weekday()) où ce chantier est éligible à une run autonome. NULL = éligible tout jour où sy_autonomy_window est ouverte (comportement historique). Chantier #504.
+- **`archived_at`** — Soft archive. NULL = active (default UI filter). Set = archived (kept searchable via RAG).
+- **`mission_letter`** — Structured markdown mission letter (context/objectives/scope/criteria/constraints/team briefing). Optional. Conditionally injected into persona + qa_run.
+- **`scope`** — Project perimeter (synedre|codemyshop-oss|codemyshop-enterprise|tenant|business). Distinct from client_id, which designates the target tenant. Shown as a badge on /hub/jobsite.
+- **`preprod_test_plan`** — Free markdown: preprod URLs to validate, <TENANT> commands, visual checks. Displayed by /jobsite <codename> when status=test.
+- **`ship_command`** — Exact command to run to close the jobsite (e.g. ./ship synedre-os, ./ship <TENANT>-v2, ./ship all). Displayed by /jobsite <codename> when status=test.
+- **`external_contacts`** — CSV of email addresses (e.g. jane.doe@<TENANT>.com,john.smith@<TENANT>.com) proactively monitored by Marco Polo (watch agent). The sy_dream cron scans sy_inbox_emails over the last 7 days → matches → unpauses the jobsite and creates a task for the watch agent when activity is detected.
+- **`auto_explode`** — If TRUE, when the jobsite's discovery work order passes done, triggers the sy_jobsite_explode_discovery LLM pipeline to create the Phase A/B/C work orders automatically. DB kill-switch.
+- **`qa_verdict`** — QA orbit verdict during the test phase: green|red|incomplete|pending. green + auto-closable → done.
+- **`qa_proof_path`** — Path to the 3-axis QA proof (sy_run_qa) produced by the orbit — zero false greens.
+- **`auto_deployed_at`** — Last successful AUTO ./deploy launched by sy_autonomie_tick (non-client target). Throttle: the tick runs hourly within the 19h-4h window and would otherwise redeploy a jobsite in test ~10x per night. Only a deploy with rc=0 stamps it — a failure must be able to retry. NULL = never auto-deployed.
+- **`preferred_dows`** — Weekdays (0=Monday..6=Sunday, aligned with datetime.weekday()) on which this jobsite is eligible for an autonomous run. NULL = eligible any day the sy_autonomy_window is open (historical behavior).
 
-### `sy_chantier_travail`
+### `sy_jobsite_work_order`
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
-| `id_travail` | integer | NOT NULL | — |
-| `id_chantier` | integer | NOT NULL | 0 |
+| `id_work_order` | integer | NOT NULL | — |
+| `id_jobsite` | integer | NOT NULL | 0 |
 | `codename` | character varying(64) | NOT NULL | — |
 | `title` | character varying(255) | NOT NULL | — |
 | `client_id` | character varying(32) | — | — |
@@ -226,7 +226,7 @@ Column notes:
 | `estimated_effort_d` | numeric(5,1) | — | — |
 | `spent_effort_d` | numeric(5,1) | — | 0.0 |
 | `notes` | text | — | — |
-| `conduite_slug` | character varying(128) | — | — |
+| `playbook_slug` | character varying(128) | — | — |
 | `agent_codename` | character varying(64) | — | — |
 | `agent_prompt` | text | — | — |
 | `zone_perimeter` | text | — | — |
@@ -238,30 +238,30 @@ Column notes:
 | `review_notified_at` | timestamp without time zone | — | — |
 | `mode_auto` | boolean | NOT NULL | false |
 | `qa_iteration_count` | integer | NOT NULL | 0 |
-| `resolves_travail_id` | integer | — | — |
-| `depends_on_travail_id` | integer | — | — |
+| `resolves_work_order_id` | integer | — | — |
+| `depends_on_work_order_id` | integer | — | — |
 | `runner` | character varying(32) | — | — |
 | `auto_disabled_at` | timestamp with time zone | — | — |
 | `auto_disabled_reason` | text | — | — |
 | `auto_timeout_count` | integer | NOT NULL | 0 |
 
 Column notes:
-- **`review_notified_at`** — Date push email fondateur quand travail bascule en review. NULL = pas encore notifié.
-- **`mode_auto`** — Si TRUE, la skill /chantier <code> -tr <travail> --auto enchaîne automatiquement les tâches todo sans intervention. Stop conditions : fail tâche, scope creep, deploy KO. Travail #157.
-- **`qa_iteration_count`** — Compteur d itérations QA déclenchées en mode --auto (travail #159). Max 3 sinon STOP escalade fondateur.
-- **`resolves_travail_id`** — Si NOT NULL, ce travail-bis résout le travail référencé (cible = status=paused). Quand le bis passe done, cascade auto : paused→done + tâches todo→cancelled + append decision_json « resolved by bis ». Chantier #57 doctrine 2026-05-20.
-- **`depends_on_travail_id`** — DEPRECATED (tache #974, 2026-05-24): migré vers sy_travail_dep (DAG N:M). Col conservée READ-ONLY pour 1 release. Lire depuis sy_travail_dep, écrire via INSERT/DELETE sy_travail_dep. Trigger trg_travail_depends_on_readonly bloque toute écriture non-NULL.
-- **`auto_disabled_at`** — Coupe-circuit anti-runaway : tamponné par sy_task_worker quand il désarme mode_auto sur rc!=0 / qa=fail. NOT NULL = désarmement délibéré, le tick d'autonomie ne ré-arme JAMAIS. NULL = jamais armé, propagation depuis chantier.mode_auto autorisée. Purgé par le réarmement manuel (run-auto / bouton ▶).
-- **`auto_disabled_reason`** — Raison du désarmement anti-runaway (ex "rc=1 + qa=fail"). Traçabilité : sans elle, « mode_auto=false » ne dit pas POURQUOI et le prochain lecteur re-arme à l'aveugle.
+- **`review_notified_at`** — Date the founder was emailed when the work order moved to review. NULL = not yet notified.
+- **`mode_auto`** — If TRUE, the /jobsite <code> -tr <work_order> --auto skill chains todo tasks automatically without intervention. Stop conditions: task failure, scope creep, failed deploy.
+- **`qa_iteration_count`** — Count of QA iterations triggered in --auto mode. Max 3, then STOP and escalate to the founder.
+- **`resolves_work_order_id`** — If NOT NULL, this follow-up work order resolves the referenced one (target = status=paused). When the follow-up passes done, auto cascade: paused→done + todo tasks→cancelled + append a resolved-by-follow-up entry to decision_json.
+- **`depends_on_work_order_id`** — DEPRECATED: migrated to sy_work_order_dep (N:M DAG). Column kept READ-ONLY for one release. Read from sy_work_order_dep, write via INSERT/DELETE on sy_work_order_dep. Trigger trg_work_order_depends_on_readonly blocks any non-NULL write.
+- **`auto_disabled_at`** — Anti-runaway circuit breaker: stamped by sy_task_worker when it disarms mode_auto on rc!=0 / qa=fail. NOT NULL = deliberate disarm, the autonomy tick NEVER re-arms. NULL = never armed, propagation from jobsite.mode_auto allowed. Cleared by manual re-arming (run-auto / the ▶ button).
+- **`auto_disabled_reason`** — Reason for the anti-runaway disarm (e.g. "rc=1 + qa=fail"). Traceability: without it, mode_auto=false does not say WHY, and the next reader re-arms blindly.
 
-### `sy_chantier_agent`
+### `sy_jobsite_agent`
 
-> Équipes recrutées par chantier — role production/validation (travail #159).
+> Teams recruited per jobsite — role production/validation.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
 | `id_assignment` | integer | NOT NULL | — |
-| `id_chantier` | integer | NOT NULL | — |
+| `id_jobsite` | integer | NOT NULL | — |
 | `agent_codename` | character varying(64) | NOT NULL | — |
 | `role` | character varying(32) | NOT NULL | — |
 | `"position"` | integer | NOT NULL | 0 |
@@ -269,14 +269,14 @@ Column notes:
 | `date_unassigned` | timestamp with time zone | — | — |
 | `notes` | text | — | — |
 
-### `sy_chantier_claude_session`
+### `sy_jobsite_claude_session`
 
-> Travail #165 — 1 chantier = 1 session Claude Code (UUID jsonl ~/.claude/projects/-home-ubuntu-synedre-os/). Cap 3 actives concurrentes hors sycl-default.
+> 1 jobsite = 1 Claude Code session (UUID jsonl under ~/.claude/projects/<project>/). Cap of 3 concurrent active sessions excluding sycl-default.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
 | `id_session` | integer | NOT NULL | — |
-| `id_chantier` | integer | NOT NULL | — |
+| `id_jobsite` | integer | NOT NULL | — |
 | `jsonl_uuid` | uuid | NOT NULL | — |
 | `started_at` | timestamp with time zone | NOT NULL | now() |
 | `last_active_at` | timestamp with time zone | NOT NULL | now() |
@@ -285,13 +285,13 @@ Column notes:
 | `closed_at` | timestamp with time zone | — | — |
 | `closed_reason` | character varying(32) | — | — |
 
-### `sy_chantier_lock`
+### `sy_jobsite_lock`
 
-> Lock par chantier pour empêcher 2 sessions Claude Code sur LE MEME chantier. TTL 30 min auto-cleanup via cron + auto-release au Stop hook. Doctrine 2026-05-20 chantier #58.
+> Per-jobsite lock preventing two Claude Code sessions on the SAME jobsite. 30 min TTL with auto-cleanup via cron and auto-release on the Stop hook.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
-| `id_chantier` | integer | NOT NULL | — |
+| `id_jobsite` | integer | NOT NULL | — |
 | `session_id` | character varying(64) | NOT NULL | — |
 | `terminal_pid` | integer | — | — |
 | `hostname` | character varying(64) | — | — |
@@ -300,33 +300,33 @@ Column notes:
 | `owner_kind` | character varying(8) | NOT NULL | 'user'::character varying |
 
 Column notes:
-- **`session_id`** — Identifiant unique session Claude Code. Source ordre: env CLAUDE_SESSION_ID > sha256(tty) > pid-user@host.
+- **`session_id`** — Unique Claude Code session identifier. Order of precedence: env CLAUDE_SESSION_ID > sha256(tty) > pid-user@host.
 
-### `sy_chantier_readiness`
+### `sy_jobsite_readiness`
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
 | `id_readiness` | integer | NOT NULL | — |
-| `id_chantier` | integer | NOT NULL | — |
+| `id_jobsite` | integer | NOT NULL | — |
 | `verdict` | character varying(16) | NOT NULL | — |
 | `score` | integer | NOT NULL | 0 |
 | `reasons` | text | — | — |
 | `missing` | text | — | — |
 | `enriched` | text | — | — |
 | `action_taken` | character varying(32) | — | 'none'::character varying |
-| `chantier_status_at_run` | character varying(32) | — | — |
+| `jobsite_status_at_run` | character varying(32) | — | — |
 | `mode_auto_at_run` | boolean | — | — |
-| `total_taches` | integer | — | — |
+| `total_tasks` | integer | — | — |
 | `assignees` | integer | — | — |
 | `date_add` | timestamp with time zone | — | now() |
 | `date_upd` | timestamp with time zone | — | now() |
 
-### `sy_chantier_qa_run`
+### `sy_jobsite_qa_run`
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
 | `id_run` | integer | NOT NULL | — |
-| `id_chantier` | integer | NOT NULL | — |
+| `id_jobsite` | integer | NOT NULL | — |
 | `triggered_by` | character varying(16) | NOT NULL | 'manual'::character varying |
 | `yaml_version` | integer | — | — |
 | `base_url` | character varying(255) | — | — |
@@ -339,21 +339,21 @@ Column notes:
 | `date_add` | timestamp with time zone | NOT NULL | now() |
 | `date_upd` | timestamp with time zone | NOT NULL | now() |
 
-### `sy_chantier_relevance`
+### `sy_jobsite_relevance`
 
-> Dernier verdict de pertinence par chantier (heuristique + LLM). Source unique pour le bouton audit /hub/chantier. Chantier #129 — 2026-05-26.
+> Latest relevance verdict per jobsite (heuristic + LLM). Single source for the audit button on /hub/jobsite.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
 | `id_relevance` | integer | NOT NULL | — |
-| `id_chantier` | integer | NOT NULL | — |
+| `id_jobsite` | integer | NOT NULL | — |
 | `verdict` | character varying(16) | NOT NULL | — |
 | `confidence` | numeric(3,2) | NOT NULL | — |
 | `rationale` | text | NOT NULL | — |
 | `source` | character varying(16) | NOT NULL | — |
-| `chantier_status_at_run` | character varying(16) | NOT NULL | — |
-| `total_taches` | integer | — | — |
-| `done_taches` | integer | — | — |
+| `jobsite_status_at_run` | character varying(16) | NOT NULL | — |
+| `total_tasks` | integer | — | — |
+| `done_tasks` | integer | — | — |
 | `age_days` | integer | — | — |
 | `llm_model` | character varying(64) | — | — |
 | `llm_input_tokens` | integer | — | — |
@@ -362,14 +362,14 @@ Column notes:
 | `date_add` | timestamp with time zone | NOT NULL | now() |
 | `date_upd` | timestamp with time zone | NOT NULL | now() |
 
-### `sy_chantier_tache`
+### `sy_jobsite_task`
 
-> 3e niveau hierarchie chantier (tenant -> travail -> tache). Phase UI-9 cockpit synedre-os-cockpit.
+> Third level of the jobsite hierarchy (tenant -> work order -> task).
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
-| `id_tache` | integer | NOT NULL | — |
-| `id_travail` | integer | NOT NULL | — |
+| `id_task` | integer | NOT NULL | — |
+| `id_work_order` | integer | NOT NULL | — |
 | `title` | character varying(255) | NOT NULL | — |
 | `description` | text | — | — |
 | `status` | character varying(16) | NOT NULL | 'todo'::character varying |
@@ -400,23 +400,23 @@ Column notes:
 | `recommended_model_orient` | character varying(64) | — | NULL::character varying |
 
 Column notes:
-- **`status`** — todo → doing → testing → done | iterating (retour si test KO) | cancelled
+- **`status`** — todo → doing → testing → done | iterating (returned if a test fails) | cancelled
 - **`priority`** — P0 | P1 | P2 | P3
-- **`iteration_count`** — Incrémenté à chaque cycle testing→iterating. 0 = première tentative.
+- **`iteration_count`** — Incremented on each testing→iterating cycle. 0 = first attempt.
 - **`last_test_result`** — pass | fail | inconclusive
-- **`scope`** — Zone d'impact pour calibrer l'estimateur LLM (cicatrice #6). 7 valeurs canoniques : synedre-internal, codemyshop-oss, codemyshop-enterprise, tenant-single, tenant-multi, infra, doctrine. NULL = legacy avant travail #154.
-- **`visual_intent`** — 火眼金睛 : ce qui doit être VISIBLE à l'écran après le changement (déclaré à la création). NULL = tâche non-visuelle.
-- **`visual_url`** — 火眼金睛 : URL où vérifier le rendu (NULL = staging du chantier). Cf sy_huoyan_<TENANT> --chantier.
-- **`recommended_model_orient`** — Override GLM par tache quand le chantier est en doctrine_camp=orient. NULL = derive du tier via _GLM_TIER_MAP. Distinct de recommended_model (tier Anthropic) pour que la bascule entre camps reste reversible. Chantier #508 tache #123732.
+- **`scope`** — Impact zone used to calibrate the LLM estimator. 7 canonical values: synedre-internal, codemyshop-oss, codemyshop-enterprise, tenant-single, tenant-multi, infra, doctrine. NULL = legacy rows.
+- **`visual_intent`** — 火眼金睛 (visual QA): what must be VISIBLE on screen after the change (declared at creation). NULL = non-visual task.
+- **`visual_url`** — 火眼金睛 (visual QA): URL where the rendering is checked (NULL = the jobsite's staging). See sy_huoyan_<TENANT> --jobsite.
+- **`recommended_model_orient`** — Per-task GLM override when the jobsite runs with doctrine_camp=orient. NULL = derived from the tier via _GLM_TIER_MAP. Distinct from recommended_model (Anthropic tier) so switching between camps stays reversible.
 
-### `sy_chantier_tool`
+### `sy_jobsite_tool`
 
-> Outils disponibles sur un chantier (tenant). id_chantier=NULL = outil par defaut global, sinon attache custom.
+> Tools available on a jobsite (tenant). id_jobsite=NULL = global default tool, otherwise a custom attachment.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
 | `id_tool` | integer | NOT NULL | — |
-| `id_chantier` | integer | — | — |
+| `id_jobsite` | integer | — | — |
 | `slug` | character varying(64) | NOT NULL | — |
 | `label` | character varying(128) | NOT NULL | — |
 | `description` | text | — | — |
@@ -429,32 +429,32 @@ Column notes:
 | `date_upd` | timestamp with time zone | NOT NULL | now() |
 
 Column notes:
-- **`tool_type`** — skill (slash command) | automate (synedre/sy_*.py) | endpoint (api call) | custom (ad hoc)
-- **`config_json`** — Config specifique (target_url, args, etc.) selon tool_type.
+- **`tool_type`** — skill (slash command) | automate (synedre/sy_*.py) | endpoint (API call) | custom (ad hoc)
+- **`config_json`** — Tool-specific config (target_url, args, etc.) depending on tool_type.
 
-### `sy_tache_dep`
+### `sy_task_dep`
 
-> DAG N:M deps intra-travail entre tâches — id_tache_blocked ne peut démarrer tant que id_tache_blocker n'est pas done
+> N:M dependency DAG between tasks within a work order — id_task_blocked cannot start until id_task_blocker is done
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
 | `id_dep` | integer | NOT NULL | — |
-| `id_tache_blocked` | integer | NOT NULL | — |
-| `id_tache_blocker` | integer | NOT NULL | — |
+| `id_task_blocked` | integer | NOT NULL | — |
+| `id_task_blocker` | integer | NOT NULL | — |
 | `date_add` | timestamp without time zone | NOT NULL | now() |
 
 Column notes:
-- **`id_tache_blocked`** — Tâche bloquée (dépend de id_tache_blocker)
-- **`id_tache_blocker`** — Tâche bloqueur (doit être done avant que id_tache_blocked puisse démarrer)
+- **`id_task_blocked`** — Blocked task (depends on id_task_blocker)
+- **`id_task_blocker`** — Blocking task (must be done before id_task_blocked can start)
 
-### `sy_tache_iteration`
+### `sy_task_iteration`
 
-> Pattern ReAct (Yao 2022) : cycle Reasoning + Acting + Observation par itération de tâche. iteration_n=1 = première tentative, incrément à chaque retour testing→iterating.
+> ReAct pattern (Yao 2022): Reasoning + Acting + Observation cycle per task iteration. iteration_n=1 = first attempt, incremented on each testing→iterating transition.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
 | `id_iteration` | integer | NOT NULL | — |
-| `id_tache` | integer | NOT NULL | — |
+| `id_task` | integer | NOT NULL | — |
 | `iteration_n` | integer | NOT NULL | — |
 | `agent_codename` | character varying(64) | — | — |
 | `reason` | text | — | — |
@@ -464,49 +464,49 @@ Column notes:
 | `tools_used` | text | — | — |
 | `duration_ms` | integer | — | — |
 | `date_add` | timestamp with time zone | NOT NULL | now() |
-| `id_cicatrice` | integer | — | — |
+| `id_scar` | integer | — | — |
 | `tokens_used` | integer | — | — |
 
 Column notes:
-- **`reason`** — Raisonnement de l agent : pourquoi cette action ?
-- **`action`** — Action prise (tool call, code change, message…)
-- **`observation`** — Résultat observé (output, erreur, état après)
+- **`reason`** — Agent's reasoning: why this action?
+- **`action`** — Action taken (tool call, code change, message...)
+- **`observation`** — Observed result (output, error, resulting state)
 - **`test_result`** — pass | fail | inconclusive | skip
-- **`tools_used`** — JSON array de slugs sy_chantier_tool utilisés dans cette itération.
-- **`id_cicatrice`** — FK logique vers sy_cicatrices.id_cicatrice (déjà existante avec 642 cic). NULL = itération sans cicatrice (succès direct ou skip). Renseignée quand test_result=fail et la leçon a été gravée.
+- **`tools_used`** — JSON array of sy_jobsite_tool slugs used in this iteration.
+- **`id_scar`** — Logical FK to sy_scars.id_scar. NULL = iteration without a scar (direct success or skip). Set when test_result=fail and the lesson was recorded.
 
-### `sy_tache_skill`
+### `sy_task_skill`
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
-| `id_tache_skill` | integer | NOT NULL | — |
-| `id_tache` | integer | NOT NULL | — |
+| `id_task_skill` | integer | NOT NULL | — |
+| `id_task` | integer | NOT NULL | — |
 | `skill_name` | character varying(64) | NOT NULL | — |
 | `"position"` | integer | NOT NULL | 0 |
 | `date_add` | timestamp with time zone | NOT NULL | now() |
 
-### `sy_tache_tool`
+### `sy_task_tool`
 
-> N-N tâche ↔ outils utilisés. Trace : quel outil a servi à réaliser quelle tâche.
+> N-N task <-> tools used. Traces which tool served which task.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
-| `id_tache_tool` | integer | NOT NULL | — |
-| `id_tache` | integer | NOT NULL | — |
+| `id_task_tool` | integer | NOT NULL | — |
+| `id_task` | integer | NOT NULL | — |
 | `id_tool` | integer | NOT NULL | — |
 | `"position"` | integer | NOT NULL | 0 |
 | `used_at` | timestamp with time zone | — | — |
 | `notes` | text | — | — |
 | `date_add` | timestamp with time zone | NOT NULL | now() |
 
-### `sy_travail_agent`
+### `sy_work_order_agent`
 
-> N-N travail ↔ agents : qui bosse sur ce travail. is_lead=1 = orchestrateur (max 1 par travail recommandé).
+> N-N work order <-> agents: who works on this work order. is_lead=1 = orchestrator (max 1 per work order recommended).
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
 | `id_assignment` | integer | NOT NULL | — |
-| `id_travail` | integer | NOT NULL | — |
+| `id_work_order` | integer | NOT NULL | — |
 | `agent_codename` | character varying(64) | NOT NULL | — |
 | `role` | character varying(64) | — | — |
 | `is_lead` | smallint | NOT NULL | 0 |
@@ -515,39 +515,39 @@ Column notes:
 | `date_unassigned` | timestamp with time zone | — | — |
 | `notes` | text | — | — |
 
-### `sy_travail_dep`
+### `sy_work_order_dep`
 
-> DAG N:M deps entre travaux — id_travail_blocked ne peut demarrer tant que id_travail_blocker n'est pas done
+> N:M dependency DAG between work orders — id_work_order_blocked cannot start until id_work_order_blocker is done
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
-| `id_travail_blocked` | integer | NOT NULL | — |
-| `id_travail_blocker` | integer | NOT NULL | — |
+| `id_work_order_blocked` | integer | NOT NULL | — |
+| `id_work_order_blocker` | integer | NOT NULL | — |
 | `date_add` | timestamp without time zone | NOT NULL | now() |
 
 Column notes:
-- **`id_travail_blocked`** — Travail bloque (depend de id_travail_blocker)
-- **`id_travail_blocker`** — Travail bloqueur (doit etre done avant que id_travail_blocked puisse demarrer)
+- **`id_work_order_blocked`** — Blocked work order (depends on id_work_order_blocker)
+- **`id_work_order_blocker`** — Blocking work order (must be done before id_work_order_blocked can start)
 
-### `sy_travail_review`
+### `sy_work_order_review`
 
-> Review fondateur d un travail (déclenchée quand toutes les tâches sont done). 1 travail = N reviews (re-review si rejected → cicatrice gravée → retour dev → re-review).
+> Founder review of a work order (triggered when all its tasks are done). 1 work order = N reviews (re-review if rejected → scar recorded → back to dev → re-review).
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
 | `id_review` | integer | NOT NULL | — |
-| `id_travail` | integer | NOT NULL | — |
+| `id_work_order` | integer | NOT NULL | — |
 | `iteration_n` | integer | NOT NULL | — |
 | `status` | character varying(16) | NOT NULL | 'pending'::character varying |
 | `reviewed_by` | character varying(64) | — | — |
 | `notes` | text | — | — |
-| `id_cicatrice` | integer | — | — |
+| `id_scar` | integer | — | — |
 | `date_add` | timestamp with time zone | NOT NULL | now() |
 | `date_upd` | timestamp with time zone | NOT NULL | now() |
 
 Column notes:
-- **`status`** — pending (en attente) | validated (✓) | rejected (✗ → cicatrice)
-- **`id_cicatrice`** — FK logique vers sy_cicatrices.id_cicatrice (renseignée si status=rejected).
+- **`status`** — pending (awaiting review) | validated (✓) | rejected (✗ → scar)
+- **`id_scar`** — Logical FK to sy_scars.id_scar (set when status=rejected).
 
 
 ## Agents
@@ -616,7 +616,7 @@ Column notes:
 
 ### `sy_agent_event`
 
-> Events stream-json des spawns Claude Code, généralisée multi-source (email/chantier/task_run/manual). Chantier #92 multi-agent-cockpit. Capture fine du raisonnement agents pour cockpit live + roadmap F9 self-improving.
+> Stream-json events from Claude Code spawns, generalized to multiple sources (email/jobsite/task_run/manual). Fine-grained capture of agent reasoning for the live cockpit and the self-improving roadmap.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -633,9 +633,9 @@ Column notes:
 | `source_id` | bigint | — | — |
 
 Column notes:
-- **`agent_codename`** — Codename de l'agent qui émet l'event (sy_agents.codename). Atlas pour les sources email, peut être turing/lovelace/mitnick/etc. pour les sources chantier.
-- **`source_type`** — Type de source qui a déclenché ce spawn : email (Atlas Inbox), chantier (--auto), task_run (sy_task_run worker), manual (CLI interactive).
-- **`source_id`** — BIGINT FK polymorphe vers la table de la source (id_atlas_email pour email, id_chantier pour chantier, id_task_run pour task_run, id_session pour manual).
+- **`agent_codename`** — Codename of the agent emitting the event (sy_agents.codename). Atlas for email sources; can be turing/lovelace/mitnick/etc. for jobsite sources.
+- **`source_type`** — Type of source that triggered this spawn: email (Atlas Inbox), jobsite (--auto), task_run (sy_task_run worker), manual (interactive CLI).
+- **`source_id`** — Polymorphic BIGINT FK to the source table (id_atlas_email for email, id_jobsite for jobsite, id_task_run for task_run, id_session for manual).
 
 ### `sy_agent_heartbeat`
 
@@ -658,7 +658,7 @@ Column notes:
 
 ### `sy_agent_skill`
 
-> N-N agent ↔ skills. is_default=1 = compétence native ; sinon acquise. acquired_from_travail = trace du chantier qui a apporté la skill.
+> N-N agent <-> skills. is_default=1 = native skill; otherwise acquired. acquired_from_work_order records the jobsite that brought in the skill.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -666,18 +666,18 @@ Column notes:
 | `agent_codename` | character varying(64) | NOT NULL | — |
 | `skill_slug` | character varying(64) | NOT NULL | — |
 | `is_default` | smallint | NOT NULL | 0 |
-| `acquired_from_travail` | character varying(64) | — | — |
+| `acquired_from_work_order` | character varying(64) | — | — |
 | `acquired_at` | timestamp with time zone | NOT NULL | now() |
 | `mastery_level` | smallint | — | 1 |
 | `notes` | text | — | — |
 | `date_upd` | timestamp with time zone | NOT NULL | now() |
 
 Column notes:
-- **`mastery_level`** — 1-5 (1=débutant, 5=maître). Augmente avec l usage.
+- **`mastery_level`** — 1-5 (1=beginner, 5=master). Increases with usage.
 
 ### `sy_agent_tool`
 
-> Registre des outils CLI Claude Code dont dispose Atlas (spawn bypassPermissions, sans restriction --allowedTools). builtin = garanti ; mcp = conditionnel (dépend des serveurs MCP en settings au spawn).
+> Registry of Claude Code CLI tools available to Atlas (spawned with bypassPermissions, no --allowedTools restriction). builtin = guaranteed; mcp = conditional (depends on the MCP servers configured in settings at spawn time).
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -715,7 +715,7 @@ Column notes:
 
 ### `sy_ai_routing`
 
-> Routing IA canonique (chantier #191). Lu par sy_ai_provider.py (Python) et ai-gateway.ts (TS). Remplace ai-routing.yaml.
+> Canonical AI routing. Read by sy_ai_provider.py (Python) and ai-gateway.ts (TS). Replaces ai-routing.yaml.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -760,18 +760,18 @@ Column notes:
 | `role` | character varying(8) | NOT NULL | '''user'''::character varying |
 | `date_add` | timestamp with time zone | NOT NULL | now() |
 
-### `sy_automate_conduites`
+### `sy_automate_playbooks`
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
 | `id_automate` | integer | NOT NULL | — |
-| `conduite_slug` | character varying(128) | NOT NULL | — |
+| `playbook_slug` | character varying(128) | NOT NULL | — |
 | `step_position` | integer | NOT NULL | 0 |
 | `date_add` | timestamp with time zone | NOT NULL | now() |
 
 ### `sy_automate_llm_run`
 
-> Cout $ + tokens + modele par execution des automates cron LLM hors chantiers autonomes (sy_agent_event ne couvre que brainstorm/chantier/email). Chantier #505.
+> Cost ($), tokens and model per execution of the LLM cron automations outside autonomous jobsites (sy_agent_event only covers brainstorm/jobsite/email).
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -815,7 +815,7 @@ Column notes:
 
 ### `sy_cron_heartbeat`
 
-> Registre des crons supervisés + leur dernier battement de cœur. Le battement est écrit PAR LE SCRIPT lui-même (synedre/sy_cron_beat.py), JAMAIS par la ligne de crontab : un beat accolé en `; beat` aurait rapporté « vivant » le 2026-07-17 alors que python n'avait jamais tourné (le sourcing échouait, le && cassait avant). Le beat prouve que le SCRIPT s'est exécuté, pas que cron a tiré. Lu par synedre/sy_cron_deadman.py. Chantier #465.
+> Registry of supervised cron jobs and their last heartbeat. The beat is written BY THE SCRIPT itself (synedre/sy_cron_beat.py), NEVER by the crontab line: a beat appended as `; beat` once reported a job as alive while python had never actually run (sourcing failed, the && broke before reaching it). The beat proves the SCRIPT executed, not that cron fired. Read by synedre/sy_cron_deadman.py.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -831,21 +831,21 @@ Column notes:
 | `notes` | text | — | — |
 
 Column notes:
-- **`script_name`** — Nom du script SANS chemin ni extension (ex: sy_whatsapp_to_<TENANT>). Clé d'identité partagée entre le beat (écriture) et le détecteur (lecture).
-- **`registered_at`** — Date d'inscription au registre. INDISPENSABLE : sans elle, une ligne jamais battue (last_beat_at NULL) n'a pas d'âge et le détecteur ne peut pas dire depuis quand elle est morte. Or le cron MORT-NÉ (câblé de travers, jamais exécuté une seule fois) est précisément la panne du 2026-07-17 — le cas le plus important à attraper.
-- **`last_beat_at`** — Dernier battement. NULL = ce script n'a JAMAIS battu depuis registered_at : mort-né, pas « en attente ». Le détecteur mesure alors le silence depuis registered_at.
-- **`last_status`** — ok | fail — état du DERNIER run. Complète sy_cron_errors : `fail` = le script a tourné et mal fini (il bat quand même, il est vivant) ; un silence = il n'a pas tourné du tout. Deux pannes différentes, deux signaux différents.
-- **`expected_interval_s`** — Cadence nominale déclarée, en secondes (ex: 15 pour sy_whatsapp_to_<TENANT> = 4 lignes crontab décalées 0/15/30/45s ; 60 pour un * * * * * simple). DÉCLARÉE et non déduite du crontab : explicite > magique, et le crontab n'est pas git-tracké.
-- **`max_silence_s`** — Seuil de mort : au-delà de ce silence, le script est déclaré mort. Seuil ABSOLU en secondes plutôt qu'un facteur multiplicatif — un facteur 3 sur un cron à 15s alerterait au bout de 45s, soit au moindre hoquet. Chaque cron déclare la fenêtre d'absence qui compte VRAIMENT pour lui. CHECK: doit dépasser expected_interval_s.
-- **`last_alerted_at`** — Dernière alerte émise pour ce script. Anti-spam : sans ça le détecteur ré-alerterait à chaque passage pour le même mort. Un garde qui bruit meurt socialement (Alex filtre, puis n'ouvre plus) — le cas nul (registre tout vert = ZÉRO email) est un livrable.
-- **`active`** — FALSE = supervision suspendue (cron volontairement éteint). Ne pas supprimer la ligne pour faire taire une alerte : on perdrait registered_at et l'historique.
+- **`script_name`** — Script name WITHOUT path or extension (e.g. sy_whatsapp_to_<TENANT>). Identity key shared between the beat (writer) and the detector (reader).
+- **`registered_at`** — Registration date. ESSENTIAL: without it, a row that never beat (last_beat_at NULL) has no age, and the detector cannot tell how long it has been dead. The STILLBORN cron (miswired, never executed even once) is precisely the failure mode that matters most to catch.
+- **`last_beat_at`** — Last heartbeat. NULL = this script has NEVER beaten since registered_at: stillborn, not merely waiting. The detector then measures the silence from registered_at.
+- **`last_status`** — ok | fail — state of the LAST run. Complements sy_cron_errors: `fail` = the script ran and ended badly (it still beats, it is alive); silence = it did not run at all. Two different failures, two different signals.
+- **`expected_interval_s`** — Declared nominal cadence, in seconds (e.g. 15 for sy_whatsapp_to_<TENANT> = 4 crontab lines offset by 0/15/30/45s; 60 for a plain * * * * *). DECLARED rather than derived from the crontab: explicit beats magic, and the crontab is not git-tracked.
+- **`max_silence_s`** — Death threshold: beyond this silence the script is declared dead. ABSOLUTE threshold in seconds rather than a multiplicative factor — a 3x factor on a 15s cron would alert after 45s, i.e. at the slightest hiccup. Each cron declares the absence window that TRULY matters for it. CHECK: must exceed expected_interval_s.
+- **`last_alerted_at`** — Last alert emitted for this script. Anti-spam: without it the detector would re-alert on every pass for the same dead script. A noisy guard dies socially (the operator filters it, then stops opening) — the null case (all-green registry = ZERO emails) is a deliverable.
+- **`active`** — FALSE = supervision suspended (cron intentionally switched off). Do not delete the row to silence an alert: registered_at and the history would be lost.
 
 
-## Doctrine, cicatrices & introspection
+## Doctrine, scars & introspection
 
 ### `sy_conscience_health`
 
-> Bilan de santé nocturne de Shyrka : agrégat des audits par dimension. Chantier #182 Phase 2. Read-only.
+> Shyrka's nightly health report: aggregate of the audits per dimension. Read-only.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -860,7 +860,7 @@ Column notes:
 
 ### `sy_doc_coverage`
 
-> Angles morts doc de Shyrka : façades réelles non couvertes par un chapitre. #182 Phase 5. Read-only.
+> Shyrka's documentation blind spots: real facades not covered by any chapter. Read-only.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -874,7 +874,7 @@ Column notes:
 
 ### `sy_doc_drift`
 
-> Miroir nocturne de Shyrka : écart doc(proprioception)↔code(corps). Chantier #182 Phase 0. Read-only.
+> Shyrka's nightly mirror: gap between doc (proprioception) and code (body). Read-only.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -892,7 +892,7 @@ Column notes:
 
 ### `sy_doc_external_review`
 
-> Feature regard-des-autres (#192) : revues doc publique par modèles externes, gatées anti-injection.
+> Outside-eyes feature: reviews of the public docs by external models, gated against prompt injection.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -906,15 +906,15 @@ Column notes:
 | `verdict_json` | jsonb | — | — |
 | `injection_attempt_detected` | boolean | NOT NULL | false |
 | `pending_id` | integer | — | — |
-| `cicatrice_id` | integer | — | — |
+| `scar_id` | integer | — | — |
 | `submitted_by` | text | — | — |
 | `created_at` | timestamp with time zone | NOT NULL | now() |
 | `processed_at` | timestamp with time zone | — | — |
 
 Column notes:
-- **`prompt_generated`** — HTML public scrubbé issu de sy_doc_chapter UNIQUEMENT. Jamais de contenu .md interne.
-- **`external_response`** — Réponse du modèle externe collée par l'humain. Cap 50k chars enforced côté endpoint POST.
-- **`injection_attempt_detected`** — Calculé par claude -p sandbox. Si true : log severity=high sy_daily_meet, aucune action.
+- **`prompt_generated`** — Scrubbed public HTML built from sy_doc_chapter ONLY. Never any internal .md content.
+- **`external_response`** — External model's response pasted in by the human. 50k char cap enforced by the POST endpoint.
+- **`injection_attempt_detected`** — Computed by a sandboxed claude -p. If true: log severity=high in sy_daily_meet, no action taken.
 
 ### `sy_doc_gap`
 
@@ -941,11 +941,11 @@ Column notes:
 | `html` | text | NOT NULL | — |
 | `updated_at` | timestamp with time zone | NOT NULL | now() |
 
-### `sy_cicatrices`
+### `sy_scars`
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
-| `id_cicatrice` | integer | NOT NULL | — |
+| `id_scar` | integer | NOT NULL | — |
 | `agent_codename` | character varying(64) | NOT NULL | — |
 | `error_type` | character varying(64) | NOT NULL | '''convention'''::character varying |
 | `description` | text | NOT NULL | — |
@@ -967,21 +967,21 @@ Column notes:
 | `learnable` | boolean | NOT NULL | false |
 | `public_status` | character varying(16) | — | — |
 | `guardrail_status` | character varying(16) | — | — |
-| `id_chantier` | integer | — | — |
+| `id_jobsite` | integer | — | — |
 | `dup_signature` | character varying(160) | — | — |
 | `duplicate_count` | integer | NOT NULL | 0 |
 | `last_dup_at` | timestamp with time zone | — | — |
 
 Column notes:
-- **`error_type`** — Taxonomie close : frontend_ui, i18n, api_contract, db_schema, auth_session, deploy_propagation, automation_silent_fail, routing_seo, naming_convention, legacy_cleanup, infra_git, email_imap, accessibility, tenant_isolation, data_quality, other. Legacy: convention (à requalifier via sy_cicatrice_qualify.py).
-- **`severity`** — low | medium | high | critical (CHECK chk_cicatrices_severity).
-- **`error_type_proposed`** — Catégorie proposée par LLM-qualify (à committer dans error_type après review humaine).
-- **`qualify_confidence`** — Confiance 0.00-1.00. <0.70 = review humaine requise avant commit error_type=error_type_proposed.
-- **`qualify_reasoning`** — Justification 1-ligne du LLM (audit trail).
-- **`tags`** — Axes orthogonaux : tenant, env, priorité, domaine. Recherche via @> (array contains).
-- **`dup_signature`** — Signature canonique auto-only (format auto:<pattern_id>@<agent_codename>). NULL = chemin non-auto (victoire, fail_tache manuel, publish) → dédup désactivée. Chantier dédup cicatrices (run mode plan).
-- **`duplicate_count`** — Occurrences regravées absorbées par la dédup auto (NOT NULL DEFAULT 0). Compteur INDEPENDANT de recall_count (qui mesure les servies).
-- **`last_dup_at`** — Timestamp de la dernière occurrence absorbée. NULL tant qu'aucun doublon n'a été vu.
+- **`error_type`** — Closed taxonomy: frontend_ui, i18n, api_contract, db_schema, auth_session, deploy_propagation, automation_silent_fail, routing_seo, naming_convention, legacy_cleanup, infra_git, email_imap, accessibility, tenant_isolation, data_quality, other. Legacy: convention (to be requalified via sy_scar_qualify.py).
+- **`severity`** — low | medium | high | critical (CHECK chk_scars_severity).
+- **`error_type_proposed`** — Category proposed by the LLM qualifier (to be committed into error_type after human review).
+- **`qualify_confidence`** — Confidence 0.00-1.00. <0.70 = human review required before committing error_type=error_type_proposed.
+- **`qualify_reasoning`** — One-line LLM justification (audit trail).
+- **`tags`** — Orthogonal axes: tenant, env, priority, domain. Searched via @> (array contains).
+- **`dup_signature`** — Auto-only canonical signature (format auto:<pattern_id>@<agent_codename>). NULL = non-auto path (victory, manual task failure, publish) → dedup disabled.
+- **`duplicate_count`** — Re-recorded occurrences absorbed by auto-dedup (NOT NULL DEFAULT 0). Counter INDEPENDENT from recall_count (which measures served recalls).
+- **`last_dup_at`** — Timestamp of the last absorbed occurrence. NULL until a duplicate has been seen.
 
 ### `sy_header_shell_health_history`
 
@@ -1000,7 +1000,7 @@ Column notes:
 
 ### `sy_reflex`
 
-> Réflexes décentralisés — règles de garde actives (pont settings.json → DB → décision).
+> Decentralized reflexes — active guard rules (settings.json -> DB -> decision bridge).
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -1021,7 +1021,7 @@ Column notes:
 
 ### `sy_reflex_audit`
 
-> Trace de toutes les décisions prises par la façade sy_reflex.py.
+> Trace of every decision made by the sy_reflex.py facade.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -1039,7 +1039,7 @@ Column notes:
 
 ### `sy_reflex_proposal`
 
-> Staging INERTE des propositions de réflexe (organe immunité adaptative, #230). JAMAIS lu par sy_reflex.py (qui ne lit que sy_reflex WHERE active=1 AND tier=bras). Pas de colonne active : aucun arming accidentel possible. Promotion = arm() humain gaté.
+> INERT staging of reflex proposals (adaptive-immunity organ). NEVER read by sy_reflex.py (which only reads sy_reflex WHERE active=1 AND tier=bras). No active column: no accidental arming possible. Promotion = gated human arm().
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -1068,16 +1068,16 @@ Column notes:
 | `date_upd` | timestamp without time zone | NOT NULL | now() |
 
 Column notes:
-- **`evidence`** — Cicatrices sources : {cluster_id, member_ids:[...], samples:[{id,error_type,desc}], recall, recency}. Une proposition sans evidence est refusée (vecteur V3).
-- **`status`** — pending → reviewed (Mitnick a tranché) → promoted (armé dans sy_reflex, geste Alex) | rejected. Le CHECK chk_reflex_proposal_arming_gate interdit promoted sans revue clean.
-- **`mitnick_verdict`** — Verdict de la revue sécurité (agent Mitnick) AVANT tout arming. clean = sûr à armer ; flagged = refusé. NULL = pas encore revu.
+- **`evidence`** — Source scars: {cluster_id, member_ids:[...], samples:[{id,error_type,desc}], recall, recency}. A proposal without evidence is rejected.
+- **`status`** — pending → reviewed (Mitnick has ruled) → promoted (armed in sy_reflex, human action) | rejected. The CHECK chk_reflex_proposal_arming_gate forbids promoted without a clean review.
+- **`mitnick_verdict`** — Security review verdict (Mitnick agent) BEFORE any arming. clean = safe to arm; flagged = refused. NULL = not yet reviewed.
 
 
 ## Lexicon & LLM pricing
 
 ### `sy_lexicon`
 
-> Registre canonique ops-interne du vocabulaire Synedre OS (statuts, identifiants, verbes). Source de vérité après chargement. Périmètre : ops uniquement — aucun vocabulaire produit/SEO (→ sy_dictionary). Chantier #174 lexique-canonique-ops, tâche #1480.
+> Canonical internal-ops registry of the Synedre OS vocabulary (statuses, identifiers, verbs). Source of truth once loaded. Scope: ops only — no product/SEO vocabulary (see sy_dictionary).
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -1096,10 +1096,10 @@ Column notes:
 | `check_db_cible` | boolean | NOT NULL | false |
 
 Column notes:
-- **`statuts_autorises`** — Tableau jsonb des valeurs autorisées pour la colonne cible (ex: [\"planning\",\"dev\",...]). NULL si non applicable.
-- **`synonymes_interdits`** — Tableau jsonb des synonymes à bannir (ex: [\"state\",\"etat\"]). NULL si non applicable.
-- **`entry_scope`** — Portée de l'entrée. Valeur seed = 'ops-interne'. Nommé entry_scope (pas scope) pour éviter confusion avec scope métier.
-- **`check_db_cible`** — true = entree adossee a un CHECK DB sur colonne_cible (statuts/scope contraints, enforcement triple registre+CHECK+linter) ; false = linter-seul (verbes CLI deploy/ship, identifiants codename/slug/id sans enum). Dette P3 chantier #174.
+- **`statuts_autorises`** — jsonb array of allowed values for the target column (e.g. ["planning","dev",...]). NULL if not applicable.
+- **`synonymes_interdits`** — jsonb array of synonyms to ban (e.g. ["state","etat"]). NULL if not applicable.
+- **`entry_scope`** — Scope of the entry. Seed value = 'ops-interne'. Named entry_scope (not scope) to avoid confusion with business scope.
+- **`check_db_cible`** — true = entry backed by a DB CHECK on colonne_cible (constrained statuses/scope; triple enforcement registry+CHECK+linter); false = linter-only (CLI verbs deploy/ship, identifiers codename/slug/id without an enum).
 
 ### `sy_llm_pricing`
 
@@ -1120,7 +1120,7 @@ Column notes:
 
 ### `sy_ai_usage`
 
-> Usage API IA par appel (tokens+coût) — imputation/refacturation par tenant (Pacioli). Alimenté par sy_ai_provider._meter_usage.
+> AI API usage per call (tokens + cost) — per-tenant attribution and rebilling (Pacioli). Fed by sy_ai_provider._meter_usage.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -1177,7 +1177,7 @@ Column notes:
 
 ### `sy_canary_target`
 
-> Canaris uptime par TYPE de page (tolérance zéro) — 1 URL représentative par type et par tenant prod. Lu par sy_canary_monitor.py.
+> Uptime canaries per page TYPE (zero tolerance) — one representative URL per type and per production tenant. Read by sy_canary_monitor.py.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -1204,7 +1204,7 @@ Column notes:
 
 ### `sy_seo_brand_brief`
 
-> Faits marque VÉRIFIÉS par tenant (grounding SEO). Multi-tenant : zéro tenant en dur dans le code. RÈGLE DURE 4 invariants.
+> VERIFIED brand facts per tenant (SEO grounding). Multi-tenant: zero hardcoded tenant in the code. HARD RULE, 4 invariants.
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -1221,8 +1221,8 @@ Column notes:
 | `authority_domains` | jsonb | — | — |
 
 Column notes:
-- **`authority_url`** — Lien autorité externe (EEAT) injecté déterministiquement — éditorial, fourni par le tenant (jamais halluciné).
-- **`sector_topics`** — Angles lexicaux du vertical (injectés dans les prompts contenu) — ex food: calibre, conditionnement, conservation. Multi-tenant: jamais de vertical en dur dans le moteur.
+- **`authority_url`** — External authority link (EEAT) injected deterministically — editorial, supplied by the tenant (never hallucinated).
+- **`sector_topics`** — Lexical angles of the vertical (injected into content prompts) — e.g. food: caliber, packaging, shelf life. Multi-tenant: never a hardcoded vertical in the engine.
 
 ### `sy_seo_bulk_queue`
 
@@ -1241,7 +1241,7 @@ Column notes:
 
 ### `sy_seo_coverage_snapshot`
 
-> Snapshot quotidien de couverture SEO source FR (id_lang=1). Chantier #228.
+> Daily snapshot of source-language SEO coverage (FR, id_lang=1).
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -1279,7 +1279,7 @@ Column notes:
 
 ### `sy_seo_i18n_audit`
 
-> Suivi couverture SEO i18n (slug/nom/meta/h1 traduits) par tenant/langue/entité/champ. Alimenté par sy_audit_seo_i18n (cron shyrka). Complète sy_seo_health_history (sentinel #197).
+> i18n SEO coverage tracking (translated slug/name/meta/h1) per tenant/language/entity/field. Fed by sy_audit_seo_i18n (shyrka cron). Complements sy_seo_health_history (SEO sentinel).
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -1393,18 +1393,18 @@ Column notes:
 
 ## Engine functions
 
-PL/pgSQL guards that encode the orchestrator's runtime doctrine (chantier gates, append-only audit, updated_at). Kept auto-contained in the distro: one function that coupled to a comm-only table was dropped with its trigger.
+PL/pgSQL guards that encode the orchestrator's runtime doctrine (jobsite gates, append-only audit, updated_at). Kept auto-contained in the distro: one function that coupled to a comm-only table was dropped with its trigger.
 
 | Function | Args | Returns | Role |
 |---|---|---|---|
-| `fn_chantier_done_requires_tasks_complete` | — | trigger | gate: a chantier may not go `done` with open tasks. |
+| `fn_jobsite_done_requires_tasks_complete` | — | trigger | gate: a jobsite may not go `done` with open tasks. |
 | `fn_set_updated_at` | — | trigger | trigger: bumps updated_at on row change. |
-| `fn_travail_depends_on_readonly` | — | trigger | guard: deprecated depends_on column is read-only (use sy_travail_dep). |
-| `guard_chantier_archive_requires_kpi_reached` | — | trigger | gate: a chantier with an outcome_kpi cannot archive until the KPI is reached. |
-| `guard_chantier_done_requires_guardrail` | — | trigger | gate: a chantier must transition through status, never INSERT as done/archived. |
-| `guard_chantier_done_requires_outcome_proof` | — | trigger | gate: closing a chantier requires an outcome proof. |
+| `fn_work_order_depends_on_readonly` | — | trigger | guard: deprecated depends_on column is read-only (use sy_work_order_dep). |
+| `guard_jobsite_archive_requires_kpi_reached` | — | trigger | gate: a jobsite with an outcome_kpi cannot archive until the KPI is reached. |
+| `guard_jobsite_done_requires_guardrail` | — | trigger | gate: a jobsite must transition through status, never INSERT as done/archived. |
+| `guard_jobsite_done_requires_outcome_proof` | — | trigger | gate: closing a jobsite requires an outcome proof. |
 | `is_safe_regex` | p text | boolean | validates a stored regex pattern (CHECK on sy_reflex). |
-| `set_cicatrice_guardrail_default` | — | trigger | trigger: defaults a cicatrice's guardrail at INSERT. |
+| `set_scar_guardrail_default` | — | trigger | trigger: defaults a scar's guardrail at INSERT. |
 
 ---
 _Generated by `02_atlas/workers/release/sy_db_schema_doc.py` from 69 tables + 8 functions. Edit bootstrap.sql, then regenerate — never edit this page._

@@ -7,7 +7,7 @@
 # à chaque `./ship`. Un rebase y réécrit des SHA DÉJÀ PUBLIÉS sur origin/main →
 # divergence main↔preprod pour un contenu identique.
 #
-# Cicatrice 2026-07-17 : main et preprod au MÊME commit (4550bfc7f). Un
+# Scar 2026-07-17 : main et preprod au MÊME commit (4550bfc7f). Un
 # `git pull --rebase` réflexe — déclenché par un simple push rejeté (Dependabot
 # avait mergé une PR sur origin/preprod) — a rejoué 153 commits et réécrit leurs
 # SHA. Divergence 152/154 commits pour un diff réel de 2 fichiers. Irréparable
@@ -67,7 +67,7 @@ BLOQUE — Réécriture d'historique sur branche partagée (doctrine )
   (ship-prod.sh fait \`git merge preprod\`) : les réécrire fait diverger
   main↔preprod pour un contenu IDENTIQUE.
 
-  Cicatrice 2026-07-17 : un \`git pull --rebase\` réflexe sur un push rejeté a
+  Scar 2026-07-17 : un \`git pull --rebase\` réflexe sur un push rejeté a
   rejoué 153 commits et fait diverger main↔preprod de 152 commits — pour un diff
   réel de 2 fichiers. Irréparable sans force-push sur une branche à 3 sessions
   actives.

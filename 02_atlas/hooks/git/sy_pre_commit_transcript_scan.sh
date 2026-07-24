@@ -48,10 +48,10 @@ echo "$CMD_DECODED" | grep -qE -- '--amend|commit-tree' && exit 0
 # Limiter à 10 hits pour ne pas exploser le reason.
 #
 # IMPORTANT (fix faux positif) : on ne scanne PAS .attachment.stdout — c'est là que vivent
-# les contextes injectés par les hooks (SessionStart injecte les cicatrices qualifiées
-# via sy_cicatrices_inject.py, qui contiennent des mots comme « fatal:true »). L'ancienne
+# les contextes injectés par les hooks (SessionStart injecte les scars qualifiées
+# via sy_scars_inject.py, qui contiennent des mots comme « fatal:true »). L'ancienne
 # requête `.. | objects | select(has("stdout"))` descendait partout et matchait ces
-# cicatrices → block à chaque session portant une cicatrice avec « fatal ». has("toolUseResult")
+# scars → block à chaque session portant une scar avec « fatal ». has("toolUseResult")
 # cible les seules sorties de commande Bash (sur 6 transcripts, 100% des toolUseResult
 # proviennent d'un tool_use name:"Bash"). La grep anti-bruit sur la signature du hook
 # elle-même est devenue morte (ses outputs vont en .attachment, jamais scannés).

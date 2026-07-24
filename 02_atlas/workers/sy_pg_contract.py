@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Contrat GOLDEN du format de sortie de la couche entité (docker psql -tA -F\\t).
-Chantier #488 tâche 1.
+Jobsite #488 task 1.
 
-TOUTE implémentation alternative de _run_sql_read (ex pool psycopg2, tâche 2) DOIT
+TOUTE implémentation alternative de _run_sql_read (ex pool psycopg2, task 2) DOIT
 produire un output BYTE-IDENTIQUE à ces références sur cette batterie de types. C'est
-la preuve contre la corruption silencieuse (cicatrice _esc antislash #1027 : un
+la preuve contre la corruption silencieuse (scar _esc antislash #1027 : un
 garde-fou installé n'est pas un garde-fou qui mord).
 
 Subtilités capturées (2026-07-18, chemin docker-psql de référence) :

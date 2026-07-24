@@ -1,6 +1,6 @@
 # publish-whitelist.txt — map of source (monolith) -> dest (OSS repo).
 #
-# Doctrine cicatrice #618 / doc-doctrine §3: the release writer copies ONLY the
+# Doctrine scar #618 / doc-doctrine §3: the release writer copies ONLY the
 # files listed here, then scrubs them. Never `cp -r` a directory then scrub it —
 # the whitelist drives inclusion. The leak gate then checks the staged output
 # regardless (defense in depth), and publishing is never autonomous.

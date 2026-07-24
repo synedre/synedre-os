@@ -5,9 +5,8 @@
 -- DO NOT hand-edit — regenerate. See 02_atlas/workers/release/README.md.
 
 CREATE SCHEMA IF NOT EXISTS shyrka;
-SET search_path = shyrka;
 
-CREATE OR REPLACE FUNCTION shyrka.fn_chantier_done_requires_tasks_complete()
+CREATE OR REPLACE FUNCTION shyrka.fn_jobsite_done_requires_tasks_complete()
  RETURNS trigger
  LANGUAGE plpgsql
 AS $function$
@@ -15,13 +14,13 @@ BEGIN
   IF NEW.status = 'done' AND OLD.status IS DISTINCT FROM 'done' THEN
     IF EXISTS (
       SELECT 1
-      FROM shyrka.sy_chantier_travail tv
-      JOIN shyrka.sy_chantier_tache t ON t.id_travail = tv.id_travail
-      WHERE tv.id_chantier = NEW.id_chantier
+      FROM shyrka.sy_jobsite_work_order tv
+      JOIN shyrka.sy_jobsite_task t ON t.id_work_order = tv.id_work_order
+      WHERE tv.id_jobsite = NEW.id_jobsite
         AND t.status NOT IN ('done', 'cancelled')
     ) THEN
       RAISE EXCEPTION
-        'chantier % : passage done refuse — il reste des taches non terminees (ni done ni cancelled). Termine ou annule-les d''abord.',
+        'jobsite %: cannot transition to done — open tasks remain (neither done nor cancelled). Finish or cancel them first.',
         NEW.codename
         USING ERRCODE = 'check_violation';
     END IF;
@@ -42,34 +41,34 @@ END;
 $function$
 ;
 
-CREATE OR REPLACE FUNCTION shyrka.fn_travail_depends_on_readonly()
+CREATE OR REPLACE FUNCTION shyrka.fn_work_order_depends_on_readonly()
  RETURNS trigger
  LANGUAGE plpgsql
 AS $function$
 BEGIN
-    IF TG_OP = 'INSERT' AND NEW.depends_on_travail_id IS NOT NULL THEN
+    IF TG_OP = 'INSERT' AND NEW.depends_on_work_order_id IS NOT NULL THEN
         RAISE EXCEPTION
-            'depends_on_travail_id est en lecture seule (DEPRECATED tache #974). '
-            'Utiliser sy_travail_dep pour les dépendances N:M. '
-            'INSERT INTO sy_travail_dep (id_travail_blocked, id_travail_blocker) VALUES (%, %)',
-            NEW.id_travail, NEW.depends_on_travail_id;
+            'depends_on_work_order_id is read-only (DEPRECATED). '
+            'Use sy_work_order_dep for N:M dependencies. '
+            'INSERT INTO sy_work_order_dep (id_work_order_blocked, id_work_order_blocker) VALUES (%, %)',
+            NEW.id_work_order, NEW.depends_on_work_order_id;
     END IF;
     IF TG_OP = 'UPDATE'
-       AND NEW.depends_on_travail_id IS NOT NULL
-       AND (OLD.depends_on_travail_id IS DISTINCT FROM NEW.depends_on_travail_id)
+       AND NEW.depends_on_work_order_id IS NOT NULL
+       AND (OLD.depends_on_work_order_id IS DISTINCT FROM NEW.depends_on_work_order_id)
     THEN
         RAISE EXCEPTION
-            'depends_on_travail_id est en lecture seule (DEPRECATED tache #974). '
-            'Utiliser sy_travail_dep pour les dépendances N:M. '
-            'INSERT INTO sy_travail_dep (id_travail_blocked, id_travail_blocker) VALUES (%, %)',
-            NEW.id_travail, NEW.depends_on_travail_id;
+            'depends_on_work_order_id is read-only (DEPRECATED). '
+            'Use sy_work_order_dep for N:M dependencies. '
+            'INSERT INTO sy_work_order_dep (id_work_order_blocked, id_work_order_blocker) VALUES (%, %)',
+            NEW.id_work_order, NEW.depends_on_work_order_id;
     END IF;
     RETURN NEW;
 END;
 $function$
 ;
 
-CREATE OR REPLACE FUNCTION shyrka.guard_chantier_archive_requires_kpi_reached()
+CREATE OR REPLACE FUNCTION shyrka.guard_jobsite_archive_requires_kpi_reached()
  RETURNS trigger
  LANGUAGE plpgsql
 AS $function$
@@ -78,43 +77,43 @@ BEGIN
      AND NEW.outcome_kpi IS NOT NULL AND btrim(NEW.outcome_kpi) <> ''
      AND NEW.outcome_reached_at IS NULL THEN
     RAISE EXCEPTION
-      'outcome-kpi-gate: chantier % (id=%) porte un outcome_kpi non atteint (outcome_reached_at NULL) — ne peut pas s''archiver tant que le KPI n''est pas confirmé atteint (chantier #397, cicatrice #989 chantier-propriétaire-à-KPI). KPI = %',
-      OLD.codename, OLD.id_chantier, NEW.outcome_kpi;
+      'outcome-kpi-gate: jobsite % (id=%) carries an unreached outcome_kpi (outcome_reached_at NULL) — cannot archive until the KPI is confirmed reached. KPI = %',
+      OLD.codename, OLD.id_jobsite, NEW.outcome_kpi;
   END IF;
   RETURN NEW;
 END;
 $function$
 ;
 
-CREATE OR REPLACE FUNCTION shyrka.guard_chantier_done_requires_guardrail()
+CREATE OR REPLACE FUNCTION shyrka.guard_jobsite_done_requires_guardrail()
  RETURNS trigger
  LANGUAGE plpgsql
 AS $function$
 DECLARE
   n_unguarded INTEGER;
 BEGIN
-  -- Cas INSERT : un chantier ne peut jamais naître déjà clos. Pas d'OLD
-  -- disponible (TG_OP='INSERT') — check catégorique sur NEW uniquement.
+  -- INSERT case: a jobsite can never be born already closed. No OLD row
+  -- available (TG_OP='INSERT') — categorical check on NEW only.
   IF TG_OP = 'INSERT' THEN
     IF NEW.status IN ('done', 'archived') THEN
       RAISE EXCEPTION
-        'guardrail-gate: un chantier ne peut pas être INSERTé directement en status=% (codename=%) — il doit TRANSITER (planning→...→done) pour passer par le gate de clôture (chantier #380 scar-to-guardrail-engine, correctif #984)',
+        'guardrail-gate: a jobsite cannot be INSERTed directly with status=% (codename=%) — it must TRANSITION (planning→...→done) through the closing gate',
         NEW.status, NEW.codename;
     END IF;
     RETURN NEW;
   END IF;
 
-  -- Cas UPDATE (logique existante, inchangée) : transition vers 'done' —
-  -- bloque si des cicatrices P0/P1 rattachées restent guardrail_status='todo'.
+  -- UPDATE case: transition to 'done' — blocks while attached P0/P1
+  -- scars still sit at guardrail_status='todo'.
   IF NEW.status = 'done' AND OLD.status IS DISTINCT FROM 'done' THEN
     SELECT count(*) INTO n_unguarded
-    FROM shyrka.sy_cicatrices
-    WHERE id_chantier = OLD.id_chantier
+    FROM shyrka.sy_scars
+    WHERE id_jobsite = OLD.id_jobsite
       AND guardrail_status = 'todo';
     IF n_unguarded > 0 THEN
       RAISE EXCEPTION
-        'guardrail-gate: chantier % (id=%) a % cicatrice(s) P0/P1 guardrail_status=todo — pose le garde-fou (check_added + guardrail_status=enforced) OU justifie vigilance avant de clore (chantier #380 scar-to-guardrail-engine)',
-        OLD.codename, OLD.id_chantier, n_unguarded;
+        'guardrail-gate: jobsite % (id=%) has % P0/P1 scar(s) with guardrail_status=todo — add the guardrail (check_added + guardrail_status=enforced) OR justify vigilance before closing',
+        OLD.codename, OLD.id_jobsite, n_unguarded;
     END IF;
   END IF;
   RETURN NEW;
@@ -122,7 +121,7 @@ END;
 $function$
 ;
 
-CREATE OR REPLACE FUNCTION shyrka.guard_chantier_done_requires_outcome_proof()
+CREATE OR REPLACE FUNCTION shyrka.guard_jobsite_done_requires_outcome_proof()
  RETURNS trigger
  LANGUAGE plpgsql
 AS $function$
@@ -131,8 +130,8 @@ BEGIN
      AND NEW.requires_outcome_proof = true
      AND (NEW.outcome_evidence IS NULL OR btrim(NEW.outcome_evidence) = '') THEN
     RAISE EXCEPTION
-      'outcome-proof-gate: chantier % (id=%) a requires_outcome_proof=true mais outcome_evidence vide — renseigne une preuve (run e2e vert ou KPI mesuré) avant de clore (chantier #397, cicatrice #987 done-requires-proof)',
-      OLD.codename, OLD.id_chantier;
+      'outcome-proof-gate: jobsite % (id=%) has requires_outcome_proof=true but outcome_evidence is empty — provide proof (a green e2e run or a measured KPI) before closing',
+      OLD.codename, OLD.id_jobsite;
   END IF;
   RETURN NEW;
 END;
@@ -144,13 +143,13 @@ CREATE OR REPLACE FUNCTION shyrka.is_safe_regex(p text)
  LANGUAGE sql
  IMMUTABLE PARALLEL SAFE
 AS $function$
-    -- NULL / vide = sûr. Sinon : refuse un groupe contenant un quantificateur
-    -- (…[*+]…) immédiatement suivi d'un quantificateur — ReDoS classique (a+)+ (.*)* …
+    -- NULL / empty = safe. Otherwise: reject a group containing a quantifier
+    -- (…[*+]…) immediately followed by a quantifier — classic ReDoS: (a+)+ (.*)* …
     SELECT p IS NULL OR p = '' OR p !~ '\([^)]*[*+][^)]*\)[*+]';
 $function$
 ;
 
-CREATE OR REPLACE FUNCTION shyrka.set_cicatrice_guardrail_default()
+CREATE OR REPLACE FUNCTION shyrka.set_scar_guardrail_default()
  RETURNS trigger
  LANGUAGE plpgsql
 AS $function$
@@ -173,12 +172,12 @@ $function$
 
 
 --
--- Name: sy_chantier_tache; Type: TABLE; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_task; Type: TABLE; Schema: shyrka; Owner: -
 --
 
-CREATE TABLE shyrka.sy_chantier_tache (
-    id_tache integer NOT NULL,
-    id_travail integer NOT NULL,
+CREATE TABLE shyrka.sy_jobsite_task (
+    id_task integer NOT NULL,
+    id_work_order integer NOT NULL,
     title character varying(255) NOT NULL,
     description text,
     status character varying(16) DEFAULT 'todo'::character varying NOT NULL,
@@ -207,87 +206,87 @@ CREATE TABLE shyrka.sy_chantier_tache (
     decompose_depth integer DEFAULT 0 NOT NULL,
     task_type character varying(50) DEFAULT NULL::character varying,
     recommended_model_orient character varying(64) DEFAULT NULL::character varying,
-    CONSTRAINT ck_tache_status CHECK (((status)::text = ANY (ARRAY['todo'::text, 'doing'::text, 'testing'::text, 'iterating'::text, 'paused'::text, 'done'::text, 'cancelled'::text]))),
-    CONSTRAINT sy_chantier_tache_scope_check CHECK (((scope IS NULL) OR ((scope)::text = ANY ((ARRAY['synedre-internal'::character varying, 'codemyshop-oss'::character varying, 'codemyshop-enterprise'::character varying, 'tenant-single'::character varying, 'tenant-multi'::character varying, 'infra'::character varying, 'doctrine'::character varying])::text[])))),
-    CONSTRAINT sy_chantier_tache_task_type_check CHECK (((task_type IS NULL) OR ((task_type)::text = ANY ((ARRAY['frontend'::character varying, 'backend'::character varying, 'infra'::character varying, 'fiscal'::character varying, 'deploy'::character varying, 'client-comm'::character varying, 'seo'::character varying, 'qa'::character varying, 'brainstorm'::character varying, 'doctrine'::character varying, 'generic'::character varying])::text[]))))
+    CONSTRAINT ck_task_status CHECK (((status)::text = ANY (ARRAY['todo'::text, 'doing'::text, 'testing'::text, 'iterating'::text, 'paused'::text, 'done'::text, 'cancelled'::text]))),
+    CONSTRAINT sy_jobsite_task_scope_check CHECK (((scope IS NULL) OR ((scope)::text = ANY ((ARRAY['synedre-internal'::character varying, 'codemyshop-oss'::character varying, 'codemyshop-enterprise'::character varying, 'tenant-single'::character varying, 'tenant-multi'::character varying, 'infra'::character varying, 'doctrine'::character varying])::text[])))),
+    CONSTRAINT sy_jobsite_task_task_type_check CHECK (((task_type IS NULL) OR ((task_type)::text = ANY ((ARRAY['frontend'::character varying, 'backend'::character varying, 'infra'::character varying, 'fiscal'::character varying, 'deploy'::character varying, 'client-comm'::character varying, 'seo'::character varying, 'qa'::character varying, 'brainstorm'::character varying, 'doctrine'::character varying, 'generic'::character varying])::text[]))))
 );
 
 
 --
--- Name: TABLE sy_chantier_tache; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: TABLE sy_jobsite_task; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_chantier_tache IS '3e niveau hierarchie chantier (tenant -> travail -> tache). Phase UI-9 cockpit synedre-os-cockpit.';
-
-
---
--- Name: COLUMN sy_chantier_tache.status; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_chantier_tache.status IS 'todo → doing → testing → done | iterating (retour si test KO) | cancelled';
+COMMENT ON TABLE shyrka.sy_jobsite_task IS 'Third level of the jobsite hierarchy (tenant -> work order -> task).';
 
 
 --
--- Name: COLUMN sy_chantier_tache.priority; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_jobsite_task.status; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_chantier_tache.priority IS 'P0 | P1 | P2 | P3';
-
-
---
--- Name: COLUMN sy_chantier_tache."position"; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_chantier_tache."position" IS 'Ordre dans la todo list du travail (drag-drop reorderable).';
+COMMENT ON COLUMN shyrka.sy_jobsite_task.status IS 'todo → doing → testing → done | iterating (returned if a test fails) | cancelled';
 
 
 --
--- Name: COLUMN sy_chantier_tache.iteration_count; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_jobsite_task.priority; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_chantier_tache.iteration_count IS 'Incrémenté à chaque cycle testing→iterating. 0 = première tentative.';
-
-
---
--- Name: COLUMN sy_chantier_tache.last_test_result; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_chantier_tache.last_test_result IS 'pass | fail | inconclusive';
+COMMENT ON COLUMN shyrka.sy_jobsite_task.priority IS 'P0 | P1 | P2 | P3';
 
 
 --
--- Name: COLUMN sy_chantier_tache.scope; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_jobsite_task."position"; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_chantier_tache.scope IS 'Zone d''impact pour calibrer l''estimateur LLM (cicatrice #6). 7 valeurs canoniques : synedre-internal, codemyshop-oss, codemyshop-enterprise, tenant-single, tenant-multi, infra, doctrine. NULL = legacy avant travail #154.';
-
-
---
--- Name: COLUMN sy_chantier_tache.visual_intent; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_chantier_tache.visual_intent IS '火眼金睛 : ce qui doit être VISIBLE à l''écran après le changement (déclaré à la création). NULL = tâche non-visuelle.';
+COMMENT ON COLUMN shyrka.sy_jobsite_task."position" IS 'Order within the work order''s todo list (drag-drop reorderable).';
 
 
 --
--- Name: COLUMN sy_chantier_tache.visual_url; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_jobsite_task.iteration_count; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_chantier_tache.visual_url IS '火眼金睛 : URL où vérifier le rendu (NULL = staging du chantier). Cf sy_huoyan_<TENANT> --chantier.';
-
-
---
--- Name: COLUMN sy_chantier_tache.recommended_model_orient; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_chantier_tache.recommended_model_orient IS 'Override GLM par tache quand le chantier est en doctrine_camp=orient. NULL = derive du tier via _GLM_TIER_MAP. Distinct de recommended_model (tier Anthropic) pour que la bascule entre camps reste reversible. Chantier #508 tache #123732.';
+COMMENT ON COLUMN shyrka.sy_jobsite_task.iteration_count IS 'Incremented on each testing→iterating cycle. 0 = first attempt.';
 
 
 --
--- Name: cs_chantier_tache_id_tache_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_jobsite_task.last_test_result; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-CREATE SEQUENCE shyrka.cs_chantier_tache_id_tache_seq
+COMMENT ON COLUMN shyrka.sy_jobsite_task.last_test_result IS 'pass | fail | inconclusive';
+
+
+--
+-- Name: COLUMN sy_jobsite_task.scope; Type: COMMENT; Schema: shyrka; Owner: -
+--
+
+COMMENT ON COLUMN shyrka.sy_jobsite_task.scope IS 'Impact zone used to calibrate the LLM estimator. 7 canonical values: synedre-internal, codemyshop-oss, codemyshop-enterprise, tenant-single, tenant-multi, infra, doctrine. NULL = legacy rows.';
+
+
+--
+-- Name: COLUMN sy_jobsite_task.visual_intent; Type: COMMENT; Schema: shyrka; Owner: -
+--
+
+COMMENT ON COLUMN shyrka.sy_jobsite_task.visual_intent IS '火眼金睛 (visual QA): what must be VISIBLE on screen after the change (declared at creation). NULL = non-visual task.';
+
+
+--
+-- Name: COLUMN sy_jobsite_task.visual_url; Type: COMMENT; Schema: shyrka; Owner: -
+--
+
+COMMENT ON COLUMN shyrka.sy_jobsite_task.visual_url IS '火眼金睛 (visual QA): URL where the rendering is checked (NULL = the jobsite''s staging). See sy_huoyan_<TENANT> --jobsite.';
+
+
+--
+-- Name: COLUMN sy_jobsite_task.recommended_model_orient; Type: COMMENT; Schema: shyrka; Owner: -
+--
+
+COMMENT ON COLUMN shyrka.sy_jobsite_task.recommended_model_orient IS 'Per-task GLM override when the jobsite runs with doctrine_camp=orient. NULL = derived from the tier via _GLM_TIER_MAP. Distinct from recommended_model (Anthropic tier) so switching between camps stays reversible.';
+
+
+--
+-- Name: cs_jobsite_task_id_task_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+--
+
+CREATE SEQUENCE shyrka.cs_jobsite_task_id_task_seq
     AS integer
     START WITH 1
     INCREMENT BY 1
@@ -297,10 +296,10 @@ CREATE SEQUENCE shyrka.cs_chantier_tache_id_tache_seq
 
 
 --
--- Name: cs_chantier_tache_id_tache_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
+-- Name: cs_jobsite_task_id_task_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
 --
 
-ALTER SEQUENCE shyrka.cs_chantier_tache_id_tache_seq OWNED BY shyrka.sy_chantier_tache.id_tache;
+ALTER SEQUENCE shyrka.cs_jobsite_task_id_task_seq OWNED BY shyrka.sy_jobsite_task.id_task;
 
 
 --
@@ -339,35 +338,35 @@ CREATE TABLE shyrka.sy_task_run (
 -- Name: TABLE sy_task_run; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_task_run IS 'Taches deleguees aux agents depuis cockpit /hub/ (Phase UI-1 synedre-os-cockpit, 2026-05-16). Worker daemon = Phase UI-2.';
+COMMENT ON TABLE shyrka.sy_task_run IS 'Tasks delegated to agents from the /hub/ cockpit. Executed by the worker daemon.';
 
 
 --
 -- Name: COLUMN sy_task_run.codename; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_task_run.codename IS 'Slug unique kebab-case, identifie la run dans logs et URL /hub/runs/<codename>.';
+COMMENT ON COLUMN shyrka.sy_task_run.codename IS 'Unique kebab-case slug identifying the run in logs and at /hub/runs/<codename>.';
 
 
 --
 -- Name: COLUMN sy_task_run.agent_codename; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_task_run.agent_codename IS 'FK logique vers sy_agents.codename.';
+COMMENT ON COLUMN shyrka.sy_task_run.agent_codename IS 'Logical FK to sy_agents.codename.';
 
 
 --
 -- Name: COLUMN sy_task_run.perimeter; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_task_run.perimeter IS 'JSON list de chemins fichiers/dirs autorises a l agent (sandboxing).';
+COMMENT ON COLUMN shyrka.sy_task_run.perimeter IS 'JSON list of file/directory paths the agent is allowed to touch (sandboxing).';
 
 
 --
 -- Name: COLUMN sy_task_run.exit_criteria; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_task_run.exit_criteria IS 'Texte libre conditions de fin attendues par operateur.';
+COMMENT ON COLUMN shyrka.sy_task_run.exit_criteria IS 'Free text: completion conditions expected by the operator.';
 
 
 --
@@ -381,7 +380,7 @@ COMMENT ON COLUMN shyrka.sy_task_run.status IS 'pending | running | completed | 
 -- Name: COLUMN sy_task_run.output_log; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_task_run.output_log IS 'Streamed stdout/stderr concat ephemere peut etre tronque.';
+COMMENT ON COLUMN shyrka.sy_task_run.output_log IS 'Streamed concatenated stdout/stderr; ephemeral, may be truncated.';
 
 
 --
@@ -405,11 +404,11 @@ ALTER SEQUENCE shyrka.cs_task_run_id_task_run_seq OWNED BY shyrka.sy_task_run.id
 
 
 --
--- Name: sy_cicatrices; Type: TABLE; Schema: shyrka; Owner: -
+-- Name: sy_scars; Type: TABLE; Schema: shyrka; Owner: -
 --
 
-CREATE TABLE shyrka.sy_cicatrices (
-    id_cicatrice integer NOT NULL,
+CREATE TABLE shyrka.sy_scars (
+    id_scar integer NOT NULL,
     agent_codename character varying(64) NOT NULL,
     error_type character varying(64) DEFAULT '''convention'''::character varying NOT NULL,
     description text NOT NULL,
@@ -431,79 +430,79 @@ CREATE TABLE shyrka.sy_cicatrices (
     learnable boolean DEFAULT false NOT NULL,
     public_status character varying(16),
     guardrail_status character varying(16),
-    id_chantier integer,
+    id_jobsite integer,
     dup_signature character varying(160),
     duplicate_count integer DEFAULT 0 NOT NULL,
     last_dup_at timestamp with time zone,
-    CONSTRAINT chk_cicatrices_guardrail_status CHECK (((guardrail_status IS NULL) OR ((guardrail_status)::text = ANY ((ARRAY['enforced'::character varying, 'vigilance'::character varying, 'todo'::character varying, 'na'::character varying])::text[])))),
-    CONSTRAINT chk_cicatrices_severity CHECK (((severity)::text = ANY ((ARRAY['low'::character varying, 'medium'::character varying, 'high'::character varying, 'critical'::character varying])::text[]))),
-    CONSTRAINT sy_cicatrices_importance_check CHECK (((importance IS NULL) OR ((importance >= 1) AND (importance <= 10)))),
-    CONSTRAINT sy_cicatrices_public_status_check CHECK (((public_status IS NULL) OR ((public_status)::text = ANY ((ARRAY['staged'::character varying, 'published'::character varying, 'flagged'::character varying])::text[])))),
-    CONSTRAINT sy_cicatrices_resolved_check CHECK ((resolved = ANY (ARRAY[0, 1, 2])))
+    CONSTRAINT chk_scars_guardrail_status CHECK (((guardrail_status IS NULL) OR ((guardrail_status)::text = ANY ((ARRAY['enforced'::character varying, 'vigilance'::character varying, 'todo'::character varying, 'na'::character varying])::text[])))),
+    CONSTRAINT chk_scars_severity CHECK (((severity)::text = ANY ((ARRAY['low'::character varying, 'medium'::character varying, 'high'::character varying, 'critical'::character varying])::text[]))),
+    CONSTRAINT sy_scars_importance_check CHECK (((importance IS NULL) OR ((importance >= 1) AND (importance <= 10)))),
+    CONSTRAINT sy_scars_public_status_check CHECK (((public_status IS NULL) OR ((public_status)::text = ANY ((ARRAY['staged'::character varying, 'published'::character varying, 'flagged'::character varying])::text[])))),
+    CONSTRAINT sy_scars_resolved_check CHECK ((resolved = ANY (ARRAY[0, 1, 2])))
 );
 
 
 --
--- Name: COLUMN sy_cicatrices.error_type; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_scars.error_type; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_cicatrices.error_type IS 'Taxonomie close : frontend_ui, i18n, api_contract, db_schema, auth_session, deploy_propagation, automation_silent_fail, routing_seo, naming_convention, legacy_cleanup, infra_git, email_imap, accessibility, tenant_isolation, data_quality, other. Legacy: convention (à requalifier via sy_cicatrice_qualify.py).';
-
-
---
--- Name: COLUMN sy_cicatrices.severity; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_cicatrices.severity IS 'low | medium | high | critical (CHECK chk_cicatrices_severity).';
+COMMENT ON COLUMN shyrka.sy_scars.error_type IS 'Closed taxonomy: frontend_ui, i18n, api_contract, db_schema, auth_session, deploy_propagation, automation_silent_fail, routing_seo, naming_convention, legacy_cleanup, infra_git, email_imap, accessibility, tenant_isolation, data_quality, other. Legacy: convention (to be requalified via sy_scar_qualify.py).';
 
 
 --
--- Name: COLUMN sy_cicatrices.error_type_proposed; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_scars.severity; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_cicatrices.error_type_proposed IS 'Catégorie proposée par LLM-qualify (à committer dans error_type après review humaine).';
-
-
---
--- Name: COLUMN sy_cicatrices.qualify_confidence; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_cicatrices.qualify_confidence IS 'Confiance 0.00-1.00. <0.70 = review humaine requise avant commit error_type=error_type_proposed.';
+COMMENT ON COLUMN shyrka.sy_scars.severity IS 'low | medium | high | critical (CHECK chk_scars_severity).';
 
 
 --
--- Name: COLUMN sy_cicatrices.qualify_reasoning; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_scars.error_type_proposed; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_cicatrices.qualify_reasoning IS 'Justification 1-ligne du LLM (audit trail).';
-
-
---
--- Name: COLUMN sy_cicatrices.tags; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_cicatrices.tags IS 'Axes orthogonaux : tenant, env, priorité, domaine. Recherche via @> (array contains).';
+COMMENT ON COLUMN shyrka.sy_scars.error_type_proposed IS 'Category proposed by the LLM qualifier (to be committed into error_type after human review).';
 
 
 --
--- Name: COLUMN sy_cicatrices.dup_signature; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_scars.qualify_confidence; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_cicatrices.dup_signature IS 'Signature canonique auto-only (format auto:<pattern_id>@<agent_codename>). NULL = chemin non-auto (victoire, fail_tache manuel, publish) → dédup désactivée. Chantier dédup cicatrices (run mode plan).';
-
-
---
--- Name: COLUMN sy_cicatrices.duplicate_count; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_cicatrices.duplicate_count IS 'Occurrences regravées absorbées par la dédup auto (NOT NULL DEFAULT 0). Compteur INDEPENDANT de recall_count (qui mesure les servies).';
+COMMENT ON COLUMN shyrka.sy_scars.qualify_confidence IS 'Confidence 0.00-1.00. <0.70 = human review required before committing error_type=error_type_proposed.';
 
 
 --
--- Name: COLUMN sy_cicatrices.last_dup_at; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_scars.qualify_reasoning; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_cicatrices.last_dup_at IS 'Timestamp de la dernière occurrence absorbée. NULL tant qu''aucun doublon n''a été vu.';
+COMMENT ON COLUMN shyrka.sy_scars.qualify_reasoning IS 'One-line LLM justification (audit trail).';
+
+
+--
+-- Name: COLUMN sy_scars.tags; Type: COMMENT; Schema: shyrka; Owner: -
+--
+
+COMMENT ON COLUMN shyrka.sy_scars.tags IS 'Orthogonal axes: tenant, env, priority, domain. Searched via @> (array contains).';
+
+
+--
+-- Name: COLUMN sy_scars.dup_signature; Type: COMMENT; Schema: shyrka; Owner: -
+--
+
+COMMENT ON COLUMN shyrka.sy_scars.dup_signature IS 'Auto-only canonical signature (format auto:<pattern_id>@<agent_codename>). NULL = non-auto path (victory, manual task failure, publish) → dedup disabled.';
+
+
+--
+-- Name: COLUMN sy_scars.duplicate_count; Type: COMMENT; Schema: shyrka; Owner: -
+--
+
+COMMENT ON COLUMN shyrka.sy_scars.duplicate_count IS 'Re-recorded occurrences absorbed by auto-dedup (NOT NULL DEFAULT 0). Counter INDEPENDENT from recall_count (which measures served recalls).';
+
+
+--
+-- Name: COLUMN sy_scars.last_dup_at; Type: COMMENT; Schema: shyrka; Owner: -
+--
+
+COMMENT ON COLUMN shyrka.sy_scars.last_dup_at IS 'Timestamp of the last absorbed occurrence. NULL until a duplicate has been seen.';
 
 
 --
@@ -642,12 +641,12 @@ CREATE TABLE shyrka.sy_automate_agents (
 
 
 --
--- Name: sy_automate_conduites; Type: TABLE; Schema: shyrka; Owner: -
+-- Name: sy_automate_playbooks; Type: TABLE; Schema: shyrka; Owner: -
 --
 
-CREATE TABLE shyrka.sy_automate_conduites (
+CREATE TABLE shyrka.sy_automate_playbooks (
     id_automate integer NOT NULL,
-    conduite_slug character varying(128) NOT NULL,
+    playbook_slug character varying(128) NOT NULL,
     step_position integer DEFAULT 0 NOT NULL,
     date_add timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -702,11 +701,11 @@ CREATE TABLE shyrka.sy_automates (
 
 
 --
--- Name: sy_chantier; Type: TABLE; Schema: shyrka; Owner: -
+-- Name: sy_jobsite; Type: TABLE; Schema: shyrka; Owner: -
 --
 
-CREATE TABLE shyrka.sy_chantier (
-    id_chantier integer NOT NULL,
+CREATE TABLE shyrka.sy_jobsite (
+    id_jobsite integer NOT NULL,
     codename character varying(64) NOT NULL,
     title character varying(255) NOT NULL,
     client_id character varying(32),
@@ -750,96 +749,96 @@ CREATE TABLE shyrka.sy_chantier (
     regime character varying(16),
     autonomie_eligible boolean DEFAULT false NOT NULL,
     classification_report jsonb,
-    CONSTRAINT ck_chantier_status CHECK (((status)::text = ANY (ARRAY['draft'::text, 'planning'::text, 'dev'::text, 'test'::text, 'paused'::text, 'done'::text, 'cancelled'::text]))),
-    CONSTRAINT sy_chantier_billing_mode_check CHECK ((billing_mode = ANY (ARRAY['forfait'::text, 'api'::text]))),
-    CONSTRAINT sy_chantier_doctrine_camp_check CHECK (((doctrine_camp)::text = ANY ((ARRAY['occident'::character varying, 'orient'::character varying])::text[]))),
-    CONSTRAINT sy_chantier_regime_check CHECK (((regime)::text = ANY ((ARRAY['run_leger'::character varying, 'run_mode_plan'::character varying, 'chantier'::character varying])::text[]))),
-    CONSTRAINT sy_chantier_scope_check CHECK (((scope IS NULL) OR ((scope)::text = ANY (ARRAY['synedre'::text, 'codemyshop-oss'::text, 'codemyshop-enterprise'::text, 'tenant'::text, 'business'::text, 'juridique'::text, 'negociation'::text, 'conseil'::text]))))
+    CONSTRAINT ck_jobsite_status CHECK (((status)::text = ANY (ARRAY['draft'::text, 'planning'::text, 'dev'::text, 'test'::text, 'paused'::text, 'done'::text, 'cancelled'::text]))),
+    CONSTRAINT sy_jobsite_billing_mode_check CHECK ((billing_mode = ANY (ARRAY['forfait'::text, 'api'::text]))),
+    CONSTRAINT sy_jobsite_doctrine_camp_check CHECK (((doctrine_camp)::text = ANY ((ARRAY['occident'::character varying, 'orient'::character varying])::text[]))),
+    CONSTRAINT sy_jobsite_regime_check CHECK (((regime)::text = ANY ((ARRAY['run_leger'::character varying, 'run_mode_plan'::character varying, 'jobsite'::character varying])::text[]))),
+    CONSTRAINT sy_jobsite_scope_check CHECK (((scope IS NULL) OR ((scope)::text = ANY (ARRAY['synedre'::text, 'codemyshop-oss'::text, 'codemyshop-enterprise'::text, 'tenant'::text, 'business'::text, 'juridique'::text, 'negociation'::text, 'conseil'::text]))))
 );
 
 
 --
--- Name: COLUMN sy_chantier.archived_at; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_jobsite.archived_at; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_chantier.archived_at IS 'Soft archive. NULL = actif (filtre UI par défaut). Renseignée = archivé (RAG searchable préservé).';
-
-
---
--- Name: COLUMN sy_chantier.mission_letter; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_chantier.mission_letter IS 'Lettre de mission markdown structurée (contexte/objectifs/scope/critères/contraintes/briefing-équipes). Optionnelle. Injectée conditionnellement dans persona + qa_run (travail #161).';
+COMMENT ON COLUMN shyrka.sy_jobsite.archived_at IS 'Soft archive. NULL = active (default UI filter). Set = archived (kept searchable via RAG).';
 
 
 --
--- Name: COLUMN sy_chantier.scope; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_jobsite.mission_letter; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_chantier.scope IS 'Périmètre projet (synedre|codemyshop-oss|codemyshop-enterprise|tenant|business). Distinct de client_id qui désigne le tenant cible. Affiché comme badge sur /hub/chantier.';
-
-
---
--- Name: COLUMN sy_chantier.preprod_test_plan; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_chantier.preprod_test_plan IS 'Markdown libre : URLs preprod à valider, commandes <TENANT>, checks visuels. Affiché par /chantier <codename> quand status=test. Doctrine review-chantier-only 2026-05-18.';
+COMMENT ON COLUMN shyrka.sy_jobsite.mission_letter IS 'Structured markdown mission letter (context/objectives/scope/criteria/constraints/team briefing). Optional. Conditionally injected into persona + qa_run.';
 
 
 --
--- Name: COLUMN sy_chantier.ship_command; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_jobsite.scope; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_chantier.ship_command IS 'Commande exacte à exécuter pour clôturer le chantier (ex: ./ship synedre-os, ./ship <TENANT>-v2, ./ship all). Affiché par /chantier <codename> quand status=test.';
-
-
---
--- Name: COLUMN sy_chantier.external_contacts; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_chantier.external_contacts IS 'CSV emails (ex: julien.tchoryk@<TENANT>.com,xavier.tostivint@<TENANT>.com) à surveiller proactivement par Marco Polo (agent veille). Cron sy_dream feature_8 scan sy_inbox_emails J-7 → matche → unpause + tâche @veille si activité.';
+COMMENT ON COLUMN shyrka.sy_jobsite.scope IS 'Project perimeter (synedre|codemyshop-oss|codemyshop-enterprise|tenant|business). Distinct from client_id, which designates the target tenant. Shown as a badge on /hub/jobsite.';
 
 
 --
--- Name: COLUMN sy_chantier.auto_explode; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_jobsite.preprod_test_plan; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_chantier.auto_explode IS 'Si TRUE et travail discovery du chantier passe done, déclenche pipeline LLM sy_chantier_explode_discovery pour créer les travaux Phase A/B/C automatiquement. Kill-switch DB doctrine 2026-05-20 chantier auto-explode-discovery.';
-
-
---
--- Name: COLUMN sy_chantier.qa_verdict; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_chantier.qa_verdict IS 'Verdict de l''orbite QA en phase test : green|red|incomplete|pending. green + auto-closable → done.';
+COMMENT ON COLUMN shyrka.sy_jobsite.preprod_test_plan IS 'Free markdown: preprod URLs to validate, <TENANT> commands, visual checks. Displayed by /jobsite <codename> when status=test.';
 
 
 --
--- Name: COLUMN sy_chantier.qa_proof_path; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_jobsite.ship_command; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_chantier.qa_proof_path IS 'Chemin de la preuve QA 3 axes (sy_run_qa) produite par l''orbite — zéro faux-vert.';
-
-
---
--- Name: COLUMN sy_chantier.auto_deployed_at; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_chantier.auto_deployed_at IS 'Dernier ./deploy AUTO réussi lancé par sy_autonomie_tick (cible non-cliente). Throttle : le tick passe chaque heure dans la fenêtre 19h-4h et redéploierait sinon ~10×/nuit un chantier en test. Seul un deploy rc=0 tamponne — un échec doit pouvoir rejouer. NULL = jamais auto-déployé.';
+COMMENT ON COLUMN shyrka.sy_jobsite.ship_command IS 'Exact command to run to close the jobsite (e.g. ./ship synedre-os, ./ship <TENANT>-v2, ./ship all). Displayed by /jobsite <codename> when status=test.';
 
 
 --
--- Name: COLUMN sy_chantier.preferred_dows; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_jobsite.external_contacts; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_chantier.preferred_dows IS 'Jours de semaine (0=lundi..6=dimanche, aligné datetime.weekday()) où ce chantier est éligible à une run autonome. NULL = éligible tout jour où sy_autonomy_window est ouverte (comportement historique). Chantier #504.';
+COMMENT ON COLUMN shyrka.sy_jobsite.external_contacts IS 'CSV of email addresses (e.g. jane.doe@<TENANT>.com,john.smith@<TENANT>.com) proactively monitored by Marco Polo (watch agent). The sy_dream cron scans sy_inbox_emails over the last 7 days → matches → unpauses the jobsite and creates a task for the watch agent when activity is detected.';
 
 
 --
--- Name: sy_chantier_id_chantier_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_jobsite.auto_explode; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-CREATE SEQUENCE shyrka.sy_chantier_id_chantier_seq
+COMMENT ON COLUMN shyrka.sy_jobsite.auto_explode IS 'If TRUE, when the jobsite''s discovery work order passes done, triggers the sy_jobsite_explode_discovery LLM pipeline to create the Phase A/B/C work orders automatically. DB kill-switch.';
+
+
+--
+-- Name: COLUMN sy_jobsite.qa_verdict; Type: COMMENT; Schema: shyrka; Owner: -
+--
+
+COMMENT ON COLUMN shyrka.sy_jobsite.qa_verdict IS 'QA orbit verdict during the test phase: green|red|incomplete|pending. green + auto-closable → done.';
+
+
+--
+-- Name: COLUMN sy_jobsite.qa_proof_path; Type: COMMENT; Schema: shyrka; Owner: -
+--
+
+COMMENT ON COLUMN shyrka.sy_jobsite.qa_proof_path IS 'Path to the 3-axis QA proof (sy_run_qa) produced by the orbit — zero false greens.';
+
+
+--
+-- Name: COLUMN sy_jobsite.auto_deployed_at; Type: COMMENT; Schema: shyrka; Owner: -
+--
+
+COMMENT ON COLUMN shyrka.sy_jobsite.auto_deployed_at IS 'Last successful AUTO ./deploy launched by sy_autonomie_tick (non-client target). Throttle: the tick runs hourly within the 19h-4h window and would otherwise redeploy a jobsite in test ~10x per night. Only a deploy with rc=0 stamps it — a failure must be able to retry. NULL = never auto-deployed.';
+
+
+--
+-- Name: COLUMN sy_jobsite.preferred_dows; Type: COMMENT; Schema: shyrka; Owner: -
+--
+
+COMMENT ON COLUMN shyrka.sy_jobsite.preferred_dows IS 'Weekdays (0=Monday..6=Sunday, aligned with datetime.weekday()) on which this jobsite is eligible for an autonomous run. NULL = eligible any day the sy_autonomy_window is open (historical behavior).';
+
+
+--
+-- Name: sy_jobsite_id_jobsite_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+--
+
+CREATE SEQUENCE shyrka.sy_jobsite_id_jobsite_seq
     AS integer
     START WITH 1
     INCREMENT BY 1
@@ -849,19 +848,19 @@ CREATE SEQUENCE shyrka.sy_chantier_id_chantier_seq
 
 
 --
--- Name: sy_chantier_id_chantier_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_id_jobsite_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
 --
 
-ALTER SEQUENCE shyrka.sy_chantier_id_chantier_seq OWNED BY shyrka.sy_chantier.id_chantier;
+ALTER SEQUENCE shyrka.sy_jobsite_id_jobsite_seq OWNED BY shyrka.sy_jobsite.id_jobsite;
 
 
 --
--- Name: sy_chantier_travail; Type: TABLE; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_work_order; Type: TABLE; Schema: shyrka; Owner: -
 --
 
-CREATE TABLE shyrka.sy_chantier_travail (
-    id_travail integer NOT NULL,
-    id_chantier integer DEFAULT 0 NOT NULL,
+CREATE TABLE shyrka.sy_jobsite_work_order (
+    id_work_order integer NOT NULL,
+    id_jobsite integer DEFAULT 0 NOT NULL,
     codename character varying(64) NOT NULL,
     title character varying(255) NOT NULL,
     client_id character varying(32),
@@ -881,7 +880,7 @@ CREATE TABLE shyrka.sy_chantier_travail (
     estimated_effort_d numeric(5,1),
     spent_effort_d numeric(5,1) DEFAULT 0.0,
     notes text,
-    conduite_slug character varying(128),
+    playbook_slug character varying(128),
     agent_codename character varying(64),
     agent_prompt text,
     zone_perimeter text,
@@ -893,71 +892,71 @@ CREATE TABLE shyrka.sy_chantier_travail (
     review_notified_at timestamp without time zone,
     mode_auto boolean DEFAULT false NOT NULL,
     qa_iteration_count integer DEFAULT 0 NOT NULL,
-    resolves_travail_id integer,
-    depends_on_travail_id integer,
+    resolves_work_order_id integer,
+    depends_on_work_order_id integer,
     runner character varying(32),
     auto_disabled_at timestamp with time zone,
     auto_disabled_reason text,
     auto_timeout_count integer DEFAULT 0 NOT NULL,
-    CONSTRAINT ck_travail_no_self_resolve CHECK (((resolves_travail_id IS NULL) OR (resolves_travail_id <> id_travail))),
-    CONSTRAINT ck_travail_status CHECK (((status)::text = ANY (ARRAY['discovery'::text, 'planning'::text, 'dev'::text, 'paused'::text, 'review'::text, 'done'::text, 'cancelled'::text])))
+    CONSTRAINT ck_work_order_no_self_resolve CHECK (((resolves_work_order_id IS NULL) OR (resolves_work_order_id <> id_work_order))),
+    CONSTRAINT ck_work_order_status CHECK (((status)::text = ANY (ARRAY['discovery'::text, 'planning'::text, 'dev'::text, 'paused'::text, 'review'::text, 'done'::text, 'cancelled'::text])))
 );
 
 
 --
--- Name: COLUMN sy_chantier_travail.review_notified_at; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_jobsite_work_order.review_notified_at; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_chantier_travail.review_notified_at IS 'Date push email fondateur quand travail bascule en review. NULL = pas encore notifié.';
-
-
---
--- Name: COLUMN sy_chantier_travail.mode_auto; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_chantier_travail.mode_auto IS 'Si TRUE, la skill /chantier <code> -tr <travail> --auto enchaîne automatiquement les tâches todo sans intervention. Stop conditions : fail tâche, scope creep, deploy KO. Travail #157.';
+COMMENT ON COLUMN shyrka.sy_jobsite_work_order.review_notified_at IS 'Date the founder was emailed when the work order moved to review. NULL = not yet notified.';
 
 
 --
--- Name: COLUMN sy_chantier_travail.qa_iteration_count; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_jobsite_work_order.mode_auto; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_chantier_travail.qa_iteration_count IS 'Compteur d itérations QA déclenchées en mode --auto (travail #159). Max 3 sinon STOP escalade fondateur.';
-
-
---
--- Name: COLUMN sy_chantier_travail.resolves_travail_id; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_chantier_travail.resolves_travail_id IS 'Si NOT NULL, ce travail-bis résout le travail référencé (cible = status=paused). Quand le bis passe done, cascade auto : paused→done + tâches todo→cancelled + append decision_json « resolved by bis ». Chantier #57 doctrine 2026-05-20.';
+COMMENT ON COLUMN shyrka.sy_jobsite_work_order.mode_auto IS 'If TRUE, the /jobsite <code> -tr <work_order> --auto skill chains todo tasks automatically without intervention. Stop conditions: task failure, scope creep, failed deploy.';
 
 
 --
--- Name: COLUMN sy_chantier_travail.depends_on_travail_id; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_jobsite_work_order.qa_iteration_count; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_chantier_travail.depends_on_travail_id IS 'DEPRECATED (tache #974, 2026-05-24): migré vers sy_travail_dep (DAG N:M). Col conservée READ-ONLY pour 1 release. Lire depuis sy_travail_dep, écrire via INSERT/DELETE sy_travail_dep. Trigger trg_travail_depends_on_readonly bloque toute écriture non-NULL.';
-
-
---
--- Name: COLUMN sy_chantier_travail.auto_disabled_at; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_chantier_travail.auto_disabled_at IS 'Coupe-circuit anti-runaway : tamponné par sy_task_worker quand il désarme mode_auto sur rc!=0 / qa=fail. NOT NULL = désarmement délibéré, le tick d''autonomie ne ré-arme JAMAIS. NULL = jamais armé, propagation depuis chantier.mode_auto autorisée. Purgé par le réarmement manuel (run-auto / bouton ▶).';
+COMMENT ON COLUMN shyrka.sy_jobsite_work_order.qa_iteration_count IS 'Count of QA iterations triggered in --auto mode. Max 3, then STOP and escalate to the founder.';
 
 
 --
--- Name: COLUMN sy_chantier_travail.auto_disabled_reason; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_jobsite_work_order.resolves_work_order_id; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_chantier_travail.auto_disabled_reason IS 'Raison du désarmement anti-runaway (ex "rc=1 + qa=fail"). Traçabilité : sans elle, « mode_auto=false » ne dit pas POURQUOI et le prochain lecteur re-arme à l''aveugle.';
+COMMENT ON COLUMN shyrka.sy_jobsite_work_order.resolves_work_order_id IS 'If NOT NULL, this follow-up work order resolves the referenced one (target = status=paused). When the follow-up passes done, auto cascade: paused→done + todo tasks→cancelled + append a resolved-by-follow-up entry to decision_json.';
 
 
 --
--- Name: sy_chantier_travail_id_travail_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_jobsite_work_order.depends_on_work_order_id; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-CREATE SEQUENCE shyrka.sy_chantier_travail_id_travail_seq
+COMMENT ON COLUMN shyrka.sy_jobsite_work_order.depends_on_work_order_id IS 'DEPRECATED: migrated to sy_work_order_dep (N:M DAG). Column kept READ-ONLY for one release. Read from sy_work_order_dep, write via INSERT/DELETE on sy_work_order_dep. Trigger trg_work_order_depends_on_readonly blocks any non-NULL write.';
+
+
+--
+-- Name: COLUMN sy_jobsite_work_order.auto_disabled_at; Type: COMMENT; Schema: shyrka; Owner: -
+--
+
+COMMENT ON COLUMN shyrka.sy_jobsite_work_order.auto_disabled_at IS 'Anti-runaway circuit breaker: stamped by sy_task_worker when it disarms mode_auto on rc!=0 / qa=fail. NOT NULL = deliberate disarm, the autonomy tick NEVER re-arms. NULL = never armed, propagation from jobsite.mode_auto allowed. Cleared by manual re-arming (run-auto / the ▶ button).';
+
+
+--
+-- Name: COLUMN sy_jobsite_work_order.auto_disabled_reason; Type: COMMENT; Schema: shyrka; Owner: -
+--
+
+COMMENT ON COLUMN shyrka.sy_jobsite_work_order.auto_disabled_reason IS 'Reason for the anti-runaway disarm (e.g. "rc=1 + qa=fail"). Traceability: without it, mode_auto=false does not say WHY, and the next reader re-arms blindly.';
+
+
+--
+-- Name: sy_jobsite_work_order_id_work_order_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+--
+
+CREATE SEQUENCE shyrka.sy_jobsite_work_order_id_work_order_seq
     AS integer
     START WITH 1
     INCREMENT BY 1
@@ -967,17 +966,17 @@ CREATE SEQUENCE shyrka.sy_chantier_travail_id_travail_seq
 
 
 --
--- Name: sy_chantier_travail_id_travail_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_work_order_id_work_order_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
 --
 
-ALTER SEQUENCE shyrka.sy_chantier_travail_id_travail_seq OWNED BY shyrka.sy_chantier_travail.id_travail;
+ALTER SEQUENCE shyrka.sy_jobsite_work_order_id_work_order_seq OWNED BY shyrka.sy_jobsite_work_order.id_work_order;
 
 
 --
--- Name: sy_cicatrices_id_cicatrice_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+-- Name: sy_scars_id_scar_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
 --
 
-CREATE SEQUENCE shyrka.sy_cicatrices_id_cicatrice_seq
+CREATE SEQUENCE shyrka.sy_scars_id_scar_seq
     AS integer
     START WITH 1
     INCREMENT BY 1
@@ -987,10 +986,10 @@ CREATE SEQUENCE shyrka.sy_cicatrices_id_cicatrice_seq
 
 
 --
--- Name: sy_cicatrices_id_cicatrice_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
+-- Name: sy_scars_id_scar_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
 --
 
-ALTER SEQUENCE shyrka.sy_cicatrices_id_cicatrice_seq OWNED BY shyrka.sy_cicatrices.id_cicatrice;
+ALTER SEQUENCE shyrka.sy_scars_id_scar_seq OWNED BY shyrka.sy_scars.id_scar;
 
 
 --
@@ -1030,7 +1029,7 @@ CREATE TABLE shyrka.sy_agent_event (
     source_type character varying(16) DEFAULT 'email'::character varying NOT NULL,
     source_id bigint,
     CONSTRAINT sy_agent_event_email_consistency_chk CHECK (((((source_type)::text = 'email'::text) AND (id_atlas_email IS NOT NULL) AND (source_id = id_atlas_email)) OR (((source_type)::text <> 'email'::text) AND (source_id IS NOT NULL)))),
-    CONSTRAINT sy_agent_event_source_type_chk CHECK (((source_type)::text = ANY (ARRAY[('email'::character varying)::text, ('chantier'::character varying)::text, ('task_run'::character varying)::text, ('manual'::character varying)::text, ('brainstorm'::character varying)::text])))
+    CONSTRAINT sy_agent_event_source_type_chk CHECK (((source_type)::text = ANY (ARRAY[('email'::character varying)::text, ('jobsite'::character varying)::text, ('task_run'::character varying)::text, ('manual'::character varying)::text, ('brainstorm'::character varying)::text])))
 );
 
 
@@ -1038,28 +1037,28 @@ CREATE TABLE shyrka.sy_agent_event (
 -- Name: TABLE sy_agent_event; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_agent_event IS 'Events stream-json des spawns Claude Code, généralisée multi-source (email/chantier/task_run/manual). Chantier #92 multi-agent-cockpit. Capture fine du raisonnement agents pour cockpit live + roadmap F9 self-improving.';
+COMMENT ON TABLE shyrka.sy_agent_event IS 'Stream-json events from Claude Code spawns, generalized to multiple sources (email/jobsite/task_run/manual). Fine-grained capture of agent reasoning for the live cockpit and the self-improving roadmap.';
 
 
 --
 -- Name: COLUMN sy_agent_event.agent_codename; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_agent_event.agent_codename IS 'Codename de l''agent qui émet l''event (sy_agents.codename). Atlas pour les sources email, peut être turing/lovelace/mitnick/etc. pour les sources chantier.';
+COMMENT ON COLUMN shyrka.sy_agent_event.agent_codename IS 'Codename of the agent emitting the event (sy_agents.codename). Atlas for email sources; can be turing/lovelace/mitnick/etc. for jobsite sources.';
 
 
 --
 -- Name: COLUMN sy_agent_event.source_type; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_agent_event.source_type IS 'Type de source qui a déclenché ce spawn : email (Atlas Inbox), chantier (--auto), task_run (sy_task_run worker), manual (CLI interactive).';
+COMMENT ON COLUMN shyrka.sy_agent_event.source_type IS 'Type of source that triggered this spawn: email (Atlas Inbox), jobsite (--auto), task_run (sy_task_run worker), manual (interactive CLI).';
 
 
 --
 -- Name: COLUMN sy_agent_event.source_id; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_agent_event.source_id IS 'BIGINT FK polymorphe vers la table de la source (id_atlas_email pour email, id_chantier pour chantier, id_task_run pour task_run, id_session pour manual).';
+COMMENT ON COLUMN shyrka.sy_agent_event.source_id IS 'Polymorphic BIGINT FK to the source table (id_atlas_email for email, id_jobsite for jobsite, id_task_run for task_run, id_session for manual).';
 
 
 --
@@ -1111,7 +1110,7 @@ CREATE TABLE shyrka.sy_agent_skill (
     agent_codename character varying(64) NOT NULL,
     skill_slug character varying(64) NOT NULL,
     is_default smallint DEFAULT 0 NOT NULL,
-    acquired_from_travail character varying(64),
+    acquired_from_work_order character varying(64),
     acquired_at timestamp with time zone DEFAULT now() NOT NULL,
     mastery_level smallint DEFAULT 1,
     notes text,
@@ -1123,14 +1122,14 @@ CREATE TABLE shyrka.sy_agent_skill (
 -- Name: TABLE sy_agent_skill; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_agent_skill IS 'N-N agent ↔ skills. is_default=1 = compétence native ; sinon acquise. acquired_from_travail = trace du chantier qui a apporté la skill.';
+COMMENT ON TABLE shyrka.sy_agent_skill IS 'N-N agent <-> skills. is_default=1 = native skill; otherwise acquired. acquired_from_work_order records the jobsite that brought in the skill.';
 
 
 --
 -- Name: COLUMN sy_agent_skill.mastery_level; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_agent_skill.mastery_level IS '1-5 (1=débutant, 5=maître). Augmente avec l usage.';
+COMMENT ON COLUMN shyrka.sy_agent_skill.mastery_level IS '1-5 (1=beginner, 5=master). Increases with usage.';
 
 
 --
@@ -1175,7 +1174,7 @@ CREATE TABLE shyrka.sy_agent_tool (
 -- Name: TABLE sy_agent_tool; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_agent_tool IS 'Registre des outils CLI Claude Code dont dispose Atlas (spawn bypassPermissions, sans restriction --allowedTools). builtin = garanti ; mcp = conditionnel (dépend des serveurs MCP en settings au spawn).';
+COMMENT ON TABLE shyrka.sy_agent_tool IS 'Registry of Claude Code CLI tools available to Atlas (spawned with bypassPermissions, no --allowedTools restriction). builtin = guaranteed; mcp = conditional (depends on the MCP servers configured in settings at spawn time).';
 
 
 --
@@ -1277,7 +1276,7 @@ CREATE TABLE shyrka.sy_ai_routing (
 -- Name: TABLE sy_ai_routing; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_ai_routing IS 'Routing IA canonique (chantier #191). Lu par sy_ai_provider.py (Python) et ai-gateway.ts (TS). Remplace ai-routing.yaml.';
+COMMENT ON TABLE shyrka.sy_ai_routing IS 'Canonical AI routing. Read by sy_ai_provider.py (Python) and ai-gateway.ts (TS). Replaces ai-routing.yaml.';
 
 
 --
@@ -1300,7 +1299,7 @@ CREATE TABLE shyrka.sy_ai_usage (
 -- Name: TABLE sy_ai_usage; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_ai_usage IS 'Usage API IA par appel (tokens+coût) — imputation/refacturation par tenant (Pacioli). Alimenté par sy_ai_provider._meter_usage.';
+COMMENT ON TABLE shyrka.sy_ai_usage IS 'AI API usage per call (tokens + cost) — per-tenant attribution and rebilling (Pacioli). Fed by sy_ai_provider._meter_usage.';
 
 
 --
@@ -1368,7 +1367,7 @@ CREATE TABLE shyrka.sy_automate_llm_run (
 -- Name: TABLE sy_automate_llm_run; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_automate_llm_run IS 'Cout $ + tokens + modele par execution des automates cron LLM hors chantiers autonomes (sy_agent_event ne couvre que brainstorm/chantier/email). Chantier #505.';
+COMMENT ON TABLE shyrka.sy_automate_llm_run IS 'Cost ($), tokens and model per execution of the LLM cron automations outside autonomous jobsites (sy_agent_event only covers brainstorm/jobsite/email).';
 
 
 --
@@ -1450,7 +1449,7 @@ CREATE TABLE shyrka.sy_autonomy_window (
 -- Name: TABLE sy_autonomy_window; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_autonomy_window IS 'Fenêtre autonomie par jour (dow 0=lundi..6=dimanche, aligné datetime.weekday()). start_hour->end_hour (wrap minuit si start>end). enabled=false coupe le démarrage ce jour. Édité par /autonomie + /hub/autonomie. Chantier autonomie-horaire.';
+COMMENT ON TABLE shyrka.sy_autonomy_window IS 'Autonomy window per day (dow 0=Monday..6=Sunday, aligned with datetime.weekday()). start_hour->end_hour (wraps past midnight if start>end). enabled=false disables startup that day. Edited via /autonomie and /hub/autonomie.';
 
 
 --
@@ -1474,7 +1473,7 @@ CREATE TABLE shyrka.sy_canary_target (
 -- Name: TABLE sy_canary_target; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_canary_target IS 'Canaris uptime par TYPE de page (tolérance zéro) — 1 URL représentative par type et par tenant prod. Lu par sy_canary_monitor.py.';
+COMMENT ON TABLE shyrka.sy_canary_target IS 'Uptime canaries per page TYPE (zero tolerance) — one representative URL per type and per production tenant. Read by sy_canary_monitor.py.';
 
 
 --
@@ -1498,34 +1497,34 @@ ALTER SEQUENCE shyrka.sy_canary_target_id_canary_seq OWNED BY shyrka.sy_canary_t
 
 
 --
--- Name: sy_chantier_agent; Type: TABLE; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_agent; Type: TABLE; Schema: shyrka; Owner: -
 --
 
-CREATE TABLE shyrka.sy_chantier_agent (
+CREATE TABLE shyrka.sy_jobsite_agent (
     id_assignment integer NOT NULL,
-    id_chantier integer NOT NULL,
+    id_jobsite integer NOT NULL,
     agent_codename character varying(64) NOT NULL,
     role character varying(32) NOT NULL,
     "position" integer DEFAULT 0 NOT NULL,
     date_assigned timestamp with time zone DEFAULT now() NOT NULL,
     date_unassigned timestamp with time zone,
     notes text,
-    CONSTRAINT sy_chantier_agent_role_check CHECK (((role)::text = ANY ((ARRAY['production'::character varying, 'validation'::character varying, 'lead_production'::character varying, 'lead_validation'::character varying])::text[])))
+    CONSTRAINT sy_jobsite_agent_role_check CHECK (((role)::text = ANY ((ARRAY['production'::character varying, 'validation'::character varying, 'lead_production'::character varying, 'lead_validation'::character varying])::text[])))
 );
 
 
 --
--- Name: TABLE sy_chantier_agent; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: TABLE sy_jobsite_agent; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_chantier_agent IS 'Équipes recrutées par chantier — role production/validation (travail #159).';
+COMMENT ON TABLE shyrka.sy_jobsite_agent IS 'Teams recruited per jobsite — role production/validation.';
 
 
 --
--- Name: sy_chantier_agent_id_assignment_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_agent_id_assignment_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
 --
 
-CREATE SEQUENCE shyrka.sy_chantier_agent_id_assignment_seq
+CREATE SEQUENCE shyrka.sy_jobsite_agent_id_assignment_seq
     AS integer
     START WITH 1
     INCREMENT BY 1
@@ -1535,19 +1534,19 @@ CREATE SEQUENCE shyrka.sy_chantier_agent_id_assignment_seq
 
 
 --
--- Name: sy_chantier_agent_id_assignment_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_agent_id_assignment_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
 --
 
-ALTER SEQUENCE shyrka.sy_chantier_agent_id_assignment_seq OWNED BY shyrka.sy_chantier_agent.id_assignment;
+ALTER SEQUENCE shyrka.sy_jobsite_agent_id_assignment_seq OWNED BY shyrka.sy_jobsite_agent.id_assignment;
 
 
 --
--- Name: sy_chantier_claude_session; Type: TABLE; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_claude_session; Type: TABLE; Schema: shyrka; Owner: -
 --
 
-CREATE TABLE shyrka.sy_chantier_claude_session (
+CREATE TABLE shyrka.sy_jobsite_claude_session (
     id_session integer NOT NULL,
-    id_chantier integer NOT NULL,
+    id_jobsite integer NOT NULL,
     jsonl_uuid uuid NOT NULL,
     started_at timestamp with time zone DEFAULT now() NOT NULL,
     last_active_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -1555,22 +1554,22 @@ CREATE TABLE shyrka.sy_chantier_claude_session (
     size_bytes bigint,
     closed_at timestamp with time zone,
     closed_reason character varying(32),
-    CONSTRAINT sy_chantier_claude_session_status_check CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'abandoned'::character varying, 'archived'::character varying])::text[])))
+    CONSTRAINT sy_jobsite_claude_session_status_check CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'abandoned'::character varying, 'archived'::character varying])::text[])))
 );
 
 
 --
--- Name: TABLE sy_chantier_claude_session; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: TABLE sy_jobsite_claude_session; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_chantier_claude_session IS 'Travail #165 — 1 chantier = 1 session Claude Code (UUID jsonl ~/.claude/projects/-home-ubuntu-synedre-os/). Cap 3 actives concurrentes hors sycl-default.';
+COMMENT ON TABLE shyrka.sy_jobsite_claude_session IS '1 jobsite = 1 Claude Code session (UUID jsonl under ~/.claude/projects/<project>/). Cap of 3 concurrent active sessions excluding sycl-default.';
 
 
 --
--- Name: sy_chantier_claude_session_id_session_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_claude_session_id_session_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
 --
 
-CREATE SEQUENCE shyrka.sy_chantier_claude_session_id_session_seq
+CREATE SEQUENCE shyrka.sy_jobsite_claude_session_id_session_seq
     AS integer
     START WITH 1
     INCREMENT BY 1
@@ -1580,49 +1579,49 @@ CREATE SEQUENCE shyrka.sy_chantier_claude_session_id_session_seq
 
 
 --
--- Name: sy_chantier_claude_session_id_session_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_claude_session_id_session_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
 --
 
-ALTER SEQUENCE shyrka.sy_chantier_claude_session_id_session_seq OWNED BY shyrka.sy_chantier_claude_session.id_session;
+ALTER SEQUENCE shyrka.sy_jobsite_claude_session_id_session_seq OWNED BY shyrka.sy_jobsite_claude_session.id_session;
 
 
 --
--- Name: sy_chantier_lock; Type: TABLE; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_lock; Type: TABLE; Schema: shyrka; Owner: -
 --
 
-CREATE TABLE shyrka.sy_chantier_lock (
-    id_chantier integer NOT NULL,
+CREATE TABLE shyrka.sy_jobsite_lock (
+    id_jobsite integer NOT NULL,
     session_id character varying(64) NOT NULL,
     terminal_pid integer,
     hostname character varying(64),
     opened_at timestamp with time zone DEFAULT now() NOT NULL,
     last_activity timestamp with time zone DEFAULT now() NOT NULL,
     owner_kind character varying(8) DEFAULT 'user'::character varying NOT NULL,
-    CONSTRAINT sy_chantier_lock_owner_kind_check CHECK (((owner_kind)::text = ANY ((ARRAY['user'::character varying, 'worker'::character varying])::text[])))
+    CONSTRAINT sy_jobsite_lock_owner_kind_check CHECK (((owner_kind)::text = ANY ((ARRAY['user'::character varying, 'worker'::character varying])::text[])))
 );
 
 
 --
--- Name: TABLE sy_chantier_lock; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: TABLE sy_jobsite_lock; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_chantier_lock IS 'Lock par chantier pour empêcher 2 sessions Claude Code sur LE MEME chantier. TTL 30 min auto-cleanup via cron + auto-release au Stop hook. Doctrine 2026-05-20 chantier #58.';
-
-
---
--- Name: COLUMN sy_chantier_lock.session_id; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_chantier_lock.session_id IS 'Identifiant unique session Claude Code. Source ordre: env CLAUDE_SESSION_ID > sha256(tty) > pid-user@host.';
+COMMENT ON TABLE shyrka.sy_jobsite_lock IS 'Per-jobsite lock preventing two Claude Code sessions on the SAME jobsite. 30 min TTL with auto-cleanup via cron and auto-release on the Stop hook.';
 
 
 --
--- Name: sy_chantier_qa_run; Type: TABLE; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_jobsite_lock.session_id; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-CREATE TABLE shyrka.sy_chantier_qa_run (
+COMMENT ON COLUMN shyrka.sy_jobsite_lock.session_id IS 'Unique Claude Code session identifier. Order of precedence: env CLAUDE_SESSION_ID > sha256(tty) > pid-user@host.';
+
+
+--
+-- Name: sy_jobsite_qa_run; Type: TABLE; Schema: shyrka; Owner: -
+--
+
+CREATE TABLE shyrka.sy_jobsite_qa_run (
     id_run integer NOT NULL,
-    id_chantier integer NOT NULL,
+    id_jobsite integer NOT NULL,
     triggered_by character varying(16) DEFAULT 'manual'::character varying NOT NULL,
     yaml_version integer,
     base_url character varying(255),
@@ -1634,16 +1633,16 @@ CREATE TABLE shyrka.sy_chantier_qa_run (
     duration_ms integer,
     date_add timestamp with time zone DEFAULT now() NOT NULL,
     date_upd timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT sy_chantier_qa_run_status_chk CHECK (((status)::text = ANY ((ARRAY['running'::character varying, 'success'::character varying, 'failure'::character varying, 'error'::character varying])::text[]))),
-    CONSTRAINT sy_chantier_qa_run_triggered_chk CHECK (((triggered_by)::text = ANY ((ARRAY['manual'::character varying, 'cascade'::character varying, 'cron'::character varying])::text[])))
+    CONSTRAINT sy_jobsite_qa_run_status_chk CHECK (((status)::text = ANY ((ARRAY['running'::character varying, 'success'::character varying, 'failure'::character varying, 'error'::character varying])::text[]))),
+    CONSTRAINT sy_jobsite_qa_run_triggered_chk CHECK (((triggered_by)::text = ANY ((ARRAY['manual'::character varying, 'cascade'::character varying, 'cron'::character varying])::text[])))
 );
 
 
 --
--- Name: sy_chantier_qa_run_id_run_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_qa_run_id_run_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
 --
 
-CREATE SEQUENCE shyrka.sy_chantier_qa_run_id_run_seq
+CREATE SEQUENCE shyrka.sy_jobsite_qa_run_id_run_seq
     AS integer
     START WITH 1
     INCREMENT BY 1
@@ -1653,28 +1652,28 @@ CREATE SEQUENCE shyrka.sy_chantier_qa_run_id_run_seq
 
 
 --
--- Name: sy_chantier_qa_run_id_run_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_qa_run_id_run_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
 --
 
-ALTER SEQUENCE shyrka.sy_chantier_qa_run_id_run_seq OWNED BY shyrka.sy_chantier_qa_run.id_run;
+ALTER SEQUENCE shyrka.sy_jobsite_qa_run_id_run_seq OWNED BY shyrka.sy_jobsite_qa_run.id_run;
 
 
 --
--- Name: sy_chantier_readiness; Type: TABLE; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_readiness; Type: TABLE; Schema: shyrka; Owner: -
 --
 
-CREATE TABLE shyrka.sy_chantier_readiness (
+CREATE TABLE shyrka.sy_jobsite_readiness (
     id_readiness integer NOT NULL,
-    id_chantier integer NOT NULL,
+    id_jobsite integer NOT NULL,
     verdict character varying(16) NOT NULL,
     score integer DEFAULT 0 NOT NULL,
     reasons text,
     missing text,
     enriched text,
     action_taken character varying(32) DEFAULT 'none'::character varying,
-    chantier_status_at_run character varying(32),
+    jobsite_status_at_run character varying(32),
     mode_auto_at_run boolean,
-    total_taches integer,
+    total_tasks integer,
     assignees integer,
     date_add timestamp with time zone DEFAULT now(),
     date_upd timestamp with time zone DEFAULT now()
@@ -1682,10 +1681,10 @@ CREATE TABLE shyrka.sy_chantier_readiness (
 
 
 --
--- Name: sy_chantier_readiness_id_readiness_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_readiness_id_readiness_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
 --
 
-CREATE SEQUENCE shyrka.sy_chantier_readiness_id_readiness_seq
+CREATE SEQUENCE shyrka.sy_jobsite_readiness_id_readiness_seq
     AS integer
     START WITH 1
     INCREMENT BY 1
@@ -1695,26 +1694,26 @@ CREATE SEQUENCE shyrka.sy_chantier_readiness_id_readiness_seq
 
 
 --
--- Name: sy_chantier_readiness_id_readiness_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_readiness_id_readiness_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
 --
 
-ALTER SEQUENCE shyrka.sy_chantier_readiness_id_readiness_seq OWNED BY shyrka.sy_chantier_readiness.id_readiness;
+ALTER SEQUENCE shyrka.sy_jobsite_readiness_id_readiness_seq OWNED BY shyrka.sy_jobsite_readiness.id_readiness;
 
 
 --
--- Name: sy_chantier_relevance; Type: TABLE; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_relevance; Type: TABLE; Schema: shyrka; Owner: -
 --
 
-CREATE TABLE shyrka.sy_chantier_relevance (
+CREATE TABLE shyrka.sy_jobsite_relevance (
     id_relevance integer NOT NULL,
-    id_chantier integer NOT NULL,
+    id_jobsite integer NOT NULL,
     verdict character varying(16) NOT NULL,
     confidence numeric(3,2) NOT NULL,
     rationale text NOT NULL,
     source character varying(16) NOT NULL,
-    chantier_status_at_run character varying(16) NOT NULL,
-    total_taches integer,
-    done_taches integer,
+    jobsite_status_at_run character varying(16) NOT NULL,
+    total_tasks integer,
+    done_tasks integer,
     age_days integer,
     llm_model character varying(64),
     llm_input_tokens integer,
@@ -1726,17 +1725,17 @@ CREATE TABLE shyrka.sy_chantier_relevance (
 
 
 --
--- Name: TABLE sy_chantier_relevance; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: TABLE sy_jobsite_relevance; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_chantier_relevance IS 'Dernier verdict de pertinence par chantier (heuristique + LLM). Source unique pour le bouton audit /hub/chantier. Chantier #129 — 2026-05-26.';
+COMMENT ON TABLE shyrka.sy_jobsite_relevance IS 'Latest relevance verdict per jobsite (heuristic + LLM). Single source for the audit button on /hub/jobsite.';
 
 
 --
--- Name: sy_chantier_relevance_id_relevance_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_relevance_id_relevance_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
 --
 
-CREATE SEQUENCE shyrka.sy_chantier_relevance_id_relevance_seq
+CREATE SEQUENCE shyrka.sy_jobsite_relevance_id_relevance_seq
     AS integer
     START WITH 1
     INCREMENT BY 1
@@ -1746,19 +1745,19 @@ CREATE SEQUENCE shyrka.sy_chantier_relevance_id_relevance_seq
 
 
 --
--- Name: sy_chantier_relevance_id_relevance_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_relevance_id_relevance_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
 --
 
-ALTER SEQUENCE shyrka.sy_chantier_relevance_id_relevance_seq OWNED BY shyrka.sy_chantier_relevance.id_relevance;
+ALTER SEQUENCE shyrka.sy_jobsite_relevance_id_relevance_seq OWNED BY shyrka.sy_jobsite_relevance.id_relevance;
 
 
 --
--- Name: sy_chantier_tool; Type: TABLE; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_tool; Type: TABLE; Schema: shyrka; Owner: -
 --
 
-CREATE TABLE shyrka.sy_chantier_tool (
+CREATE TABLE shyrka.sy_jobsite_tool (
     id_tool integer NOT NULL,
-    id_chantier integer,
+    id_jobsite integer,
     slug character varying(64) NOT NULL,
     label character varying(128) NOT NULL,
     description text,
@@ -1773,31 +1772,31 @@ CREATE TABLE shyrka.sy_chantier_tool (
 
 
 --
--- Name: TABLE sy_chantier_tool; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: TABLE sy_jobsite_tool; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_chantier_tool IS 'Outils disponibles sur un chantier (tenant). id_chantier=NULL = outil par defaut global, sinon attache custom.';
-
-
---
--- Name: COLUMN sy_chantier_tool.tool_type; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_chantier_tool.tool_type IS 'skill (slash command) | automate (synedre/sy_*.py) | endpoint (api call) | custom (ad hoc)';
+COMMENT ON TABLE shyrka.sy_jobsite_tool IS 'Tools available on a jobsite (tenant). id_jobsite=NULL = global default tool, otherwise a custom attachment.';
 
 
 --
--- Name: COLUMN sy_chantier_tool.config_json; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_jobsite_tool.tool_type; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_chantier_tool.config_json IS 'Config specifique (target_url, args, etc.) selon tool_type.';
+COMMENT ON COLUMN shyrka.sy_jobsite_tool.tool_type IS 'skill (slash command) | automate (synedre/sy_*.py) | endpoint (API call) | custom (ad hoc)';
 
 
 --
--- Name: sy_chantier_tool_id_tool_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_jobsite_tool.config_json; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-CREATE SEQUENCE shyrka.sy_chantier_tool_id_tool_seq
+COMMENT ON COLUMN shyrka.sy_jobsite_tool.config_json IS 'Tool-specific config (target_url, args, etc.) depending on tool_type.';
+
+
+--
+-- Name: sy_jobsite_tool_id_tool_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+--
+
+CREATE SEQUENCE shyrka.sy_jobsite_tool_id_tool_seq
     AS integer
     START WITH 1
     INCREMENT BY 1
@@ -1807,10 +1806,10 @@ CREATE SEQUENCE shyrka.sy_chantier_tool_id_tool_seq
 
 
 --
--- Name: sy_chantier_tool_id_tool_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_tool_id_tool_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
 --
 
-ALTER SEQUENCE shyrka.sy_chantier_tool_id_tool_seq OWNED BY shyrka.sy_chantier_tool.id_tool;
+ALTER SEQUENCE shyrka.sy_jobsite_tool_id_tool_seq OWNED BY shyrka.sy_jobsite_tool.id_tool;
 
 
 --
@@ -1839,7 +1838,7 @@ CREATE TABLE shyrka.sy_claude_session (
 -- Name: TABLE sy_claude_session; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_claude_session IS 'Index metadata des sessions Claude Code (.jsonl) — Phase UI-7 cockpit. Full content reste sur filesystem ~/.claude/projects/<project>/<uuid>.jsonl, accessible via endpoint streaming.';
+COMMENT ON TABLE shyrka.sy_claude_session IS 'Metadata index of Claude Code sessions (.jsonl). Full content stays on the filesystem at ~/.claude/projects/<project>/<uuid>.jsonl, accessible via a streaming endpoint.';
 
 
 --
@@ -1862,7 +1861,7 @@ CREATE TABLE shyrka.sy_conscience_health (
 -- Name: TABLE sy_conscience_health; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_conscience_health IS 'Bilan de santé nocturne de Shyrka : agrégat des audits par dimension. Chantier #182 Phase 2. Read-only.';
+COMMENT ON TABLE shyrka.sy_conscience_health IS 'Shyrka''s nightly health report: aggregate of the audits per dimension. Read-only.';
 
 
 --
@@ -1910,63 +1909,63 @@ CREATE TABLE shyrka.sy_cron_heartbeat (
 -- Name: TABLE sy_cron_heartbeat; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_cron_heartbeat IS 'Registre des crons supervisés + leur dernier battement de cœur. Le battement est écrit PAR LE SCRIPT lui-même (synedre/sy_cron_beat.py), JAMAIS par la ligne de crontab : un beat accolé en `; beat` aurait rapporté « vivant » le 2026-07-17 alors que python n''avait jamais tourné (le sourcing échouait, le && cassait avant). Le beat prouve que le SCRIPT s''est exécuté, pas que cron a tiré. Lu par synedre/sy_cron_deadman.py. Chantier #465.';
+COMMENT ON TABLE shyrka.sy_cron_heartbeat IS 'Registry of supervised cron jobs and their last heartbeat. The beat is written BY THE SCRIPT itself (synedre/sy_cron_beat.py), NEVER by the crontab line: a beat appended as `; beat` once reported a job as alive while python had never actually run (sourcing failed, the && broke before reaching it). The beat proves the SCRIPT executed, not that cron fired. Read by synedre/sy_cron_deadman.py.';
 
 
 --
 -- Name: COLUMN sy_cron_heartbeat.script_name; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_cron_heartbeat.script_name IS 'Nom du script SANS chemin ni extension (ex: sy_whatsapp_to_<TENANT>). Clé d''identité partagée entre le beat (écriture) et le détecteur (lecture).';
+COMMENT ON COLUMN shyrka.sy_cron_heartbeat.script_name IS 'Script name WITHOUT path or extension (e.g. sy_whatsapp_to_<TENANT>). Identity key shared between the beat (writer) and the detector (reader).';
 
 
 --
 -- Name: COLUMN sy_cron_heartbeat.registered_at; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_cron_heartbeat.registered_at IS 'Date d''inscription au registre. INDISPENSABLE : sans elle, une ligne jamais battue (last_beat_at NULL) n''a pas d''âge et le détecteur ne peut pas dire depuis quand elle est morte. Or le cron MORT-NÉ (câblé de travers, jamais exécuté une seule fois) est précisément la panne du 2026-07-17 — le cas le plus important à attraper.';
+COMMENT ON COLUMN shyrka.sy_cron_heartbeat.registered_at IS 'Registration date. ESSENTIAL: without it, a row that never beat (last_beat_at NULL) has no age, and the detector cannot tell how long it has been dead. The STILLBORN cron (miswired, never executed even once) is precisely the failure mode that matters most to catch.';
 
 
 --
 -- Name: COLUMN sy_cron_heartbeat.last_beat_at; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_cron_heartbeat.last_beat_at IS 'Dernier battement. NULL = ce script n''a JAMAIS battu depuis registered_at : mort-né, pas « en attente ». Le détecteur mesure alors le silence depuis registered_at.';
+COMMENT ON COLUMN shyrka.sy_cron_heartbeat.last_beat_at IS 'Last heartbeat. NULL = this script has NEVER beaten since registered_at: stillborn, not merely waiting. The detector then measures the silence from registered_at.';
 
 
 --
 -- Name: COLUMN sy_cron_heartbeat.last_status; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_cron_heartbeat.last_status IS 'ok | fail — état du DERNIER run. Complète sy_cron_errors : `fail` = le script a tourné et mal fini (il bat quand même, il est vivant) ; un silence = il n''a pas tourné du tout. Deux pannes différentes, deux signaux différents.';
+COMMENT ON COLUMN shyrka.sy_cron_heartbeat.last_status IS 'ok | fail — state of the LAST run. Complements sy_cron_errors: `fail` = the script ran and ended badly (it still beats, it is alive); silence = it did not run at all. Two different failures, two different signals.';
 
 
 --
 -- Name: COLUMN sy_cron_heartbeat.expected_interval_s; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_cron_heartbeat.expected_interval_s IS 'Cadence nominale déclarée, en secondes (ex: 15 pour sy_whatsapp_to_<TENANT> = 4 lignes crontab décalées 0/15/30/45s ; 60 pour un * * * * * simple). DÉCLARÉE et non déduite du crontab : explicite > magique, et le crontab n''est pas git-tracké.';
+COMMENT ON COLUMN shyrka.sy_cron_heartbeat.expected_interval_s IS 'Declared nominal cadence, in seconds (e.g. 15 for sy_whatsapp_to_<TENANT> = 4 crontab lines offset by 0/15/30/45s; 60 for a plain * * * * *). DECLARED rather than derived from the crontab: explicit beats magic, and the crontab is not git-tracked.';
 
 
 --
 -- Name: COLUMN sy_cron_heartbeat.max_silence_s; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_cron_heartbeat.max_silence_s IS 'Seuil de mort : au-delà de ce silence, le script est déclaré mort. Seuil ABSOLU en secondes plutôt qu''un facteur multiplicatif — un facteur 3 sur un cron à 15s alerterait au bout de 45s, soit au moindre hoquet. Chaque cron déclare la fenêtre d''absence qui compte VRAIMENT pour lui. CHECK: doit dépasser expected_interval_s.';
+COMMENT ON COLUMN shyrka.sy_cron_heartbeat.max_silence_s IS 'Death threshold: beyond this silence the script is declared dead. ABSOLUTE threshold in seconds rather than a multiplicative factor — a 3x factor on a 15s cron would alert after 45s, i.e. at the slightest hiccup. Each cron declares the absence window that TRULY matters for it. CHECK: must exceed expected_interval_s.';
 
 
 --
 -- Name: COLUMN sy_cron_heartbeat.last_alerted_at; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_cron_heartbeat.last_alerted_at IS 'Dernière alerte émise pour ce script. Anti-spam : sans ça le détecteur ré-alerterait à chaque passage pour le même mort. Un garde qui bruit meurt socialement (Alex filtre, puis n''ouvre plus) — le cas nul (registre tout vert = ZÉRO email) est un livrable.';
+COMMENT ON COLUMN shyrka.sy_cron_heartbeat.last_alerted_at IS 'Last alert emitted for this script. Anti-spam: without it the detector would re-alert on every pass for the same dead script. A noisy guard dies socially (the operator filters it, then stops opening) — the null case (all-green registry = ZERO emails) is a deliverable.';
 
 
 --
 -- Name: COLUMN sy_cron_heartbeat.active; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_cron_heartbeat.active IS 'FALSE = supervision suspendue (cron volontairement éteint). Ne pas supprimer la ligne pour faire taire une alerte : on perdrait registered_at et l''historique.';
+COMMENT ON COLUMN shyrka.sy_cron_heartbeat.active IS 'FALSE = supervision suspended (cron intentionally switched off). Do not delete the row to silence an alert: registered_at and the history would be lost.';
 
 
 --
@@ -1988,7 +1987,7 @@ CREATE TABLE shyrka.sy_doc_coverage (
 -- Name: TABLE sy_doc_coverage; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_doc_coverage IS 'Angles morts doc de Shyrka : façades réelles non couvertes par un chapitre. #182 Phase 5. Read-only.';
+COMMENT ON TABLE shyrka.sy_doc_coverage IS 'Shyrka''s documentation blind spots: real facades not covered by any chapter. Read-only.';
 
 
 --
@@ -2034,7 +2033,7 @@ CREATE TABLE shyrka.sy_doc_drift (
 -- Name: TABLE sy_doc_drift; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_doc_drift IS 'Miroir nocturne de Shyrka : écart doc(proprioception)↔code(corps). Chantier #182 Phase 0. Read-only.';
+COMMENT ON TABLE shyrka.sy_doc_drift IS 'Shyrka''s nightly mirror: gap between doc (proprioception) and code (body). Read-only.';
 
 
 --
@@ -2072,7 +2071,7 @@ CREATE TABLE shyrka.sy_doc_external_review (
     verdict_json jsonb,
     injection_attempt_detected boolean DEFAULT false NOT NULL,
     pending_id integer,
-    cicatrice_id integer,
+    scar_id integer,
     submitted_by text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     processed_at timestamp with time zone,
@@ -2084,28 +2083,28 @@ CREATE TABLE shyrka.sy_doc_external_review (
 -- Name: TABLE sy_doc_external_review; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_doc_external_review IS 'Feature regard-des-autres (#192) : revues doc publique par modèles externes, gatées anti-injection.';
+COMMENT ON TABLE shyrka.sy_doc_external_review IS 'Outside-eyes feature: reviews of the public docs by external models, gated against prompt injection.';
 
 
 --
 -- Name: COLUMN sy_doc_external_review.prompt_generated; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_doc_external_review.prompt_generated IS 'HTML public scrubbé issu de sy_doc_chapter UNIQUEMENT. Jamais de contenu .md interne.';
+COMMENT ON COLUMN shyrka.sy_doc_external_review.prompt_generated IS 'Scrubbed public HTML built from sy_doc_chapter ONLY. Never any internal .md content.';
 
 
 --
 -- Name: COLUMN sy_doc_external_review.external_response; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_doc_external_review.external_response IS 'Réponse du modèle externe collée par l''humain. Cap 50k chars enforced côté endpoint POST.';
+COMMENT ON COLUMN shyrka.sy_doc_external_review.external_response IS 'External model''s response pasted in by the human. 50k char cap enforced by the POST endpoint.';
 
 
 --
 -- Name: COLUMN sy_doc_external_review.injection_attempt_detected; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_doc_external_review.injection_attempt_detected IS 'Calculé par claude -p sandbox. Si true : log severity=high sy_daily_meet, aucune action.';
+COMMENT ON COLUMN shyrka.sy_doc_external_review.injection_attempt_detected IS 'Computed by a sandboxed claude -p. If true: log severity=high in sy_daily_meet, no action taken.';
 
 
 --
@@ -2280,35 +2279,35 @@ CREATE TABLE shyrka.sy_lexicon (
 -- Name: TABLE sy_lexicon; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_lexicon IS 'Registre canonique ops-interne du vocabulaire Synedre OS (statuts, identifiants, verbes). Source de vérité après chargement. Périmètre : ops uniquement — aucun vocabulaire produit/SEO (→ sy_dictionary). Chantier #174 lexique-canonique-ops, tâche #1480.';
+COMMENT ON TABLE shyrka.sy_lexicon IS 'Canonical internal-ops registry of the Synedre OS vocabulary (statuses, identifiers, verbs). Source of truth once loaded. Scope: ops only — no product/SEO vocabulary (see sy_dictionary).';
 
 
 --
 -- Name: COLUMN sy_lexicon.statuts_autorises; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_lexicon.statuts_autorises IS 'Tableau jsonb des valeurs autorisées pour la colonne cible (ex: [\"planning\",\"dev\",...]). NULL si non applicable.';
+COMMENT ON COLUMN shyrka.sy_lexicon.statuts_autorises IS 'jsonb array of allowed values for the target column (e.g. ["planning","dev",...]). NULL if not applicable.';
 
 
 --
 -- Name: COLUMN sy_lexicon.synonymes_interdits; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_lexicon.synonymes_interdits IS 'Tableau jsonb des synonymes à bannir (ex: [\"state\",\"etat\"]). NULL si non applicable.';
+COMMENT ON COLUMN shyrka.sy_lexicon.synonymes_interdits IS 'jsonb array of synonyms to ban (e.g. ["state","etat"]). NULL if not applicable.';
 
 
 --
 -- Name: COLUMN sy_lexicon.entry_scope; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_lexicon.entry_scope IS 'Portée de l''entrée. Valeur seed = ''ops-interne''. Nommé entry_scope (pas scope) pour éviter confusion avec scope métier.';
+COMMENT ON COLUMN shyrka.sy_lexicon.entry_scope IS 'Scope of the entry. Seed value = ''ops-interne''. Named entry_scope (not scope) to avoid confusion with business scope.';
 
 
 --
 -- Name: COLUMN sy_lexicon.check_db_cible; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_lexicon.check_db_cible IS 'true = entree adossee a un CHECK DB sur colonne_cible (statuts/scope contraints, enforcement triple registre+CHECK+linter) ; false = linter-seul (verbes CLI deploy/ship, identifiants codename/slug/id sans enum). Dette P3 chantier #174.';
+COMMENT ON COLUMN shyrka.sy_lexicon.check_db_cible IS 'true = entry backed by a DB CHECK on colonne_cible (constrained statuses/scope; triple enforcement registry+CHECK+linter); false = linter-only (CLI verbs deploy/ship, identifiers codename/slug/id without an enum).';
 
 
 --
@@ -2484,14 +2483,14 @@ CREATE TABLE shyrka.sy_reflex (
 -- Name: TABLE sy_reflex; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_reflex IS 'Réflexes décentralisés — règles de garde actives (pont settings.json → DB → décision).';
+COMMENT ON TABLE shyrka.sy_reflex IS 'Decentralized reflexes — active guard rules (settings.json -> DB -> decision bridge).';
 
 
 --
 -- Name: CONSTRAINT chk_sy_reflex_pattern_safe ON sy_reflex; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON CONSTRAINT chk_sy_reflex_pattern_safe ON shyrka.sy_reflex IS '3e ligne de défense anti-ReDoS (après garde runtime _safe_search + gate Python). Empêche un pattern catastrophique d''entrer en DB par INSERT/UPDATE direct. Leçon Montessori post-#231.';
+COMMENT ON CONSTRAINT chk_sy_reflex_pattern_safe ON shyrka.sy_reflex IS 'Third line of anti-ReDoS defense (after the _safe_search runtime guard and the Python gate). Prevents a catastrophic pattern from entering the DB through direct INSERT/UPDATE.';
 
 
 --
@@ -2517,7 +2516,7 @@ CREATE TABLE shyrka.sy_reflex_audit (
 -- Name: TABLE sy_reflex_audit; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_reflex_audit IS 'Trace de toutes les décisions prises par la façade sy_reflex.py.';
+COMMENT ON TABLE shyrka.sy_reflex_audit IS 'Trace of every decision made by the sy_reflex.py facade.';
 
 
 --
@@ -2599,28 +2598,28 @@ CREATE TABLE shyrka.sy_reflex_proposal (
 -- Name: TABLE sy_reflex_proposal; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_reflex_proposal IS 'Staging INERTE des propositions de réflexe (organe immunité adaptative, #230). JAMAIS lu par sy_reflex.py (qui ne lit que sy_reflex WHERE active=1 AND tier=bras). Pas de colonne active : aucun arming accidentel possible. Promotion = arm() humain gaté.';
+COMMENT ON TABLE shyrka.sy_reflex_proposal IS 'INERT staging of reflex proposals (adaptive-immunity organ). NEVER read by sy_reflex.py (which only reads sy_reflex WHERE active=1 AND tier=bras). No active column: no accidental arming possible. Promotion = gated human arm().';
 
 
 --
 -- Name: COLUMN sy_reflex_proposal.evidence; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_reflex_proposal.evidence IS 'Cicatrices sources : {cluster_id, member_ids:[...], samples:[{id,error_type,desc}], recall, recency}. Une proposition sans evidence est refusée (vecteur V3).';
+COMMENT ON COLUMN shyrka.sy_reflex_proposal.evidence IS 'Source scars: {cluster_id, member_ids:[...], samples:[{id,error_type,desc}], recall, recency}. A proposal without evidence is rejected.';
 
 
 --
 -- Name: COLUMN sy_reflex_proposal.status; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_reflex_proposal.status IS 'pending → reviewed (Mitnick a tranché) → promoted (armé dans sy_reflex, geste Alex) | rejected. Le CHECK chk_reflex_proposal_arming_gate interdit promoted sans revue clean.';
+COMMENT ON COLUMN shyrka.sy_reflex_proposal.status IS 'pending → reviewed (Mitnick has ruled) → promoted (armed in sy_reflex, human action) | rejected. The CHECK chk_reflex_proposal_arming_gate forbids promoted without a clean review.';
 
 
 --
 -- Name: COLUMN sy_reflex_proposal.mitnick_verdict; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_reflex_proposal.mitnick_verdict IS 'Verdict de la revue sécurité (agent Mitnick) AVANT tout arming. clean = sûr à armer ; flagged = refusé. NULL = pas encore revu.';
+COMMENT ON COLUMN shyrka.sy_reflex_proposal.mitnick_verdict IS 'Security review verdict (Mitnick agent) BEFORE any arming. clean = safe to arm; flagged = refused. NULL = not yet reviewed.';
 
 
 --
@@ -2670,42 +2669,42 @@ CREATE TABLE shyrka.sy_run (
 -- Name: TABLE sy_run; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_run IS 'Entité de premier rang RUN. Source unique de /hub/runs (runs-only). Les 2 sources (atlas-inbox via email intent=run, console via chat) écrivent ici. Les emails intent question/chantier/noise NE deviennent PAS des runs.';
+COMMENT ON TABLE shyrka.sy_run IS 'First-class RUN entity. Single source for /hub/runs (runs-only). Both sources (atlas-inbox via email intent=run, console via chat) write here. Emails with intent question/jobsite/noise do NOT become runs.';
 
 
 --
 -- Name: COLUMN sy_run.source; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_run.source IS 'Origine du run : atlas-inbox (email) | console (chat). Affiché en colonne Source.';
+COMMENT ON COLUMN shyrka.sy_run.source IS 'Origin of the run: atlas-inbox (email) | console (chat). Shown in the Source column.';
 
 
 --
 -- Name: COLUMN sy_run.trigger; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_run.trigger IS 'Mécanisme déclencheur : email | chat | cron.';
+COMMENT ON COLUMN shyrka.sy_run.trigger IS 'Triggering mechanism: email | chat | cron.';
 
 
 --
 -- Name: COLUMN sy_run.scope; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_run.scope IS 'Périmètre : shyrka | <codename tenant>. NULL si non dérivable (cas inbox).';
+COMMENT ON COLUMN shyrka.sy_run.scope IS 'Perimeter: shyrka | <tenant codename>. NULL if not derivable (inbox case).';
 
 
 --
 -- Name: COLUMN sy_run.ref_type; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_run.ref_type IS 'Type de la ref polymorphe : atlas_email (id_atlas_email) | brainstorm_job_thread (uuid thread console).';
+COMMENT ON COLUMN shyrka.sy_run.ref_type IS 'Type of the polymorphic ref: atlas_email (id_atlas_email) | brainstorm_job_thread (console thread uuid).';
 
 
 --
 -- Name: COLUMN sy_run.ref_id; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_run.ref_id IS 'Identifiant polymorphe : id_atlas_email pour atlas-inbox, uuid thread pour console.';
+COMMENT ON COLUMN shyrka.sy_run.ref_id IS 'Polymorphic identifier: id_atlas_email for atlas-inbox, thread uuid for console.';
 
 
 --
@@ -2765,21 +2764,21 @@ CREATE TABLE shyrka.sy_seo_brand_brief (
 -- Name: TABLE sy_seo_brand_brief; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_seo_brand_brief IS 'Faits marque VÉRIFIÉS par tenant (grounding SEO). Multi-tenant : zéro tenant en dur dans le code. RÈGLE DURE 4 invariants.';
+COMMENT ON TABLE shyrka.sy_seo_brand_brief IS 'VERIFIED brand facts per tenant (SEO grounding). Multi-tenant: zero hardcoded tenant in the code. HARD RULE, 4 invariants.';
 
 
 --
 -- Name: COLUMN sy_seo_brand_brief.authority_url; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_seo_brand_brief.authority_url IS 'Lien autorité externe (EEAT) injecté déterministiquement — éditorial, fourni par le tenant (jamais halluciné).';
+COMMENT ON COLUMN shyrka.sy_seo_brand_brief.authority_url IS 'External authority link (EEAT) injected deterministically — editorial, supplied by the tenant (never hallucinated).';
 
 
 --
 -- Name: COLUMN sy_seo_brand_brief.sector_topics; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_seo_brand_brief.sector_topics IS 'Angles lexicaux du vertical (injectés dans les prompts contenu) — ex food: calibre, conditionnement, conservation. Multi-tenant: jamais de vertical en dur dans le moteur.';
+COMMENT ON COLUMN shyrka.sy_seo_brand_brief.sector_topics IS 'Lexical angles of the vertical (injected into content prompts) — e.g. food: caliber, packaging, shelf life. Multi-tenant: never a hardcoded vertical in the engine.';
 
 
 --
@@ -2843,7 +2842,7 @@ CREATE TABLE shyrka.sy_seo_coverage_snapshot (
 -- Name: TABLE sy_seo_coverage_snapshot; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_seo_coverage_snapshot IS 'Snapshot quotidien de couverture SEO source FR (id_lang=1). Chantier #228.';
+COMMENT ON TABLE shyrka.sy_seo_coverage_snapshot IS 'Daily snapshot of source-language SEO coverage (FR, id_lang=1).';
 
 
 --
@@ -2934,7 +2933,7 @@ CREATE TABLE shyrka.sy_seo_i18n_audit (
 -- Name: TABLE sy_seo_i18n_audit; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_seo_i18n_audit IS 'Suivi couverture SEO i18n (slug/nom/meta/h1 traduits) par tenant/langue/entité/champ. Alimenté par sy_audit_seo_i18n (cron shyrka). Complète sy_seo_health_history (sentinel #197).';
+COMMENT ON TABLE shyrka.sy_seo_i18n_audit IS 'i18n SEO coverage tracking (translated slug/name/meta/h1) per tenant/language/entity/field. Fed by sy_audit_seo_i18n (shyrka cron). Complements sy_seo_health_history (SEO sentinel).';
 
 
 --
@@ -3195,44 +3194,44 @@ ALTER SEQUENCE shyrka.sy_seo_tracked_keyword_id_keyword_seq OWNED BY shyrka.sy_s
 
 
 --
--- Name: sy_tache_dep; Type: TABLE; Schema: shyrka; Owner: -
+-- Name: sy_task_dep; Type: TABLE; Schema: shyrka; Owner: -
 --
 
-CREATE TABLE shyrka.sy_tache_dep (
+CREATE TABLE shyrka.sy_task_dep (
     id_dep integer NOT NULL,
-    id_tache_blocked integer NOT NULL,
-    id_tache_blocker integer NOT NULL,
+    id_task_blocked integer NOT NULL,
+    id_task_blocker integer NOT NULL,
     date_add timestamp without time zone DEFAULT now() NOT NULL,
-    CONSTRAINT chk_sy_tache_dep_no_self_loop CHECK ((id_tache_blocked <> id_tache_blocker))
+    CONSTRAINT chk_sy_task_dep_no_self_loop CHECK ((id_task_blocked <> id_task_blocker))
 );
 
 
 --
--- Name: TABLE sy_tache_dep; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: TABLE sy_task_dep; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_tache_dep IS 'DAG N:M deps intra-travail entre tâches — id_tache_blocked ne peut démarrer tant que id_tache_blocker n''est pas done';
-
-
---
--- Name: COLUMN sy_tache_dep.id_tache_blocked; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_tache_dep.id_tache_blocked IS 'Tâche bloquée (dépend de id_tache_blocker)';
+COMMENT ON TABLE shyrka.sy_task_dep IS 'N:M dependency DAG between tasks within a work order — id_task_blocked cannot start until id_task_blocker is done';
 
 
 --
--- Name: COLUMN sy_tache_dep.id_tache_blocker; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_task_dep.id_task_blocked; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_tache_dep.id_tache_blocker IS 'Tâche bloqueur (doit être done avant que id_tache_blocked puisse démarrer)';
+COMMENT ON COLUMN shyrka.sy_task_dep.id_task_blocked IS 'Blocked task (depends on id_task_blocker)';
 
 
 --
--- Name: sy_tache_dep_id_dep_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_task_dep.id_task_blocker; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-CREATE SEQUENCE shyrka.sy_tache_dep_id_dep_seq
+COMMENT ON COLUMN shyrka.sy_task_dep.id_task_blocker IS 'Blocking task (must be done before id_task_blocked can start)';
+
+
+--
+-- Name: sy_task_dep_id_dep_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+--
+
+CREATE SEQUENCE shyrka.sy_task_dep_id_dep_seq
     AS integer
     START WITH 1
     INCREMENT BY 1
@@ -3242,19 +3241,19 @@ CREATE SEQUENCE shyrka.sy_tache_dep_id_dep_seq
 
 
 --
--- Name: sy_tache_dep_id_dep_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
+-- Name: sy_task_dep_id_dep_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
 --
 
-ALTER SEQUENCE shyrka.sy_tache_dep_id_dep_seq OWNED BY shyrka.sy_tache_dep.id_dep;
+ALTER SEQUENCE shyrka.sy_task_dep_id_dep_seq OWNED BY shyrka.sy_task_dep.id_dep;
 
 
 --
--- Name: sy_tache_iteration; Type: TABLE; Schema: shyrka; Owner: -
+-- Name: sy_task_iteration; Type: TABLE; Schema: shyrka; Owner: -
 --
 
-CREATE TABLE shyrka.sy_tache_iteration (
+CREATE TABLE shyrka.sy_task_iteration (
     id_iteration integer NOT NULL,
-    id_tache integer NOT NULL,
+    id_task integer NOT NULL,
     iteration_n integer NOT NULL,
     agent_codename character varying(64),
     reason text,
@@ -3264,65 +3263,65 @@ CREATE TABLE shyrka.sy_tache_iteration (
     tools_used text,
     duration_ms integer,
     date_add timestamp with time zone DEFAULT now() NOT NULL,
-    id_cicatrice integer,
+    id_scar integer,
     tokens_used integer
 );
 
 
 --
--- Name: TABLE sy_tache_iteration; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: TABLE sy_task_iteration; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_tache_iteration IS 'Pattern ReAct (Yao 2022) : cycle Reasoning + Acting + Observation par itération de tâche. iteration_n=1 = première tentative, incrément à chaque retour testing→iterating.';
-
-
---
--- Name: COLUMN sy_tache_iteration.reason; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_tache_iteration.reason IS 'Raisonnement de l agent : pourquoi cette action ?';
+COMMENT ON TABLE shyrka.sy_task_iteration IS 'ReAct pattern (Yao 2022): Reasoning + Acting + Observation cycle per task iteration. iteration_n=1 = first attempt, incremented on each testing→iterating transition.';
 
 
 --
--- Name: COLUMN sy_tache_iteration.action; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_task_iteration.reason; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_tache_iteration.action IS 'Action prise (tool call, code change, message…)';
-
-
---
--- Name: COLUMN sy_tache_iteration.observation; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_tache_iteration.observation IS 'Résultat observé (output, erreur, état après)';
+COMMENT ON COLUMN shyrka.sy_task_iteration.reason IS 'Agent''s reasoning: why this action?';
 
 
 --
--- Name: COLUMN sy_tache_iteration.test_result; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_task_iteration.action; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_tache_iteration.test_result IS 'pass | fail | inconclusive | skip';
-
-
---
--- Name: COLUMN sy_tache_iteration.tools_used; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_tache_iteration.tools_used IS 'JSON array de slugs sy_chantier_tool utilisés dans cette itération.';
+COMMENT ON COLUMN shyrka.sy_task_iteration.action IS 'Action taken (tool call, code change, message...)';
 
 
 --
--- Name: COLUMN sy_tache_iteration.id_cicatrice; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_task_iteration.observation; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_tache_iteration.id_cicatrice IS 'FK logique vers sy_cicatrices.id_cicatrice (déjà existante avec 642 cic). NULL = itération sans cicatrice (succès direct ou skip). Renseignée quand test_result=fail et la leçon a été gravée.';
+COMMENT ON COLUMN shyrka.sy_task_iteration.observation IS 'Observed result (output, error, resulting state)';
 
 
 --
--- Name: sy_tache_iteration_id_iteration_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_task_iteration.test_result; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-CREATE SEQUENCE shyrka.sy_tache_iteration_id_iteration_seq
+COMMENT ON COLUMN shyrka.sy_task_iteration.test_result IS 'pass | fail | inconclusive | skip';
+
+
+--
+-- Name: COLUMN sy_task_iteration.tools_used; Type: COMMENT; Schema: shyrka; Owner: -
+--
+
+COMMENT ON COLUMN shyrka.sy_task_iteration.tools_used IS 'JSON array of sy_jobsite_tool slugs used in this iteration.';
+
+
+--
+-- Name: COLUMN sy_task_iteration.id_scar; Type: COMMENT; Schema: shyrka; Owner: -
+--
+
+COMMENT ON COLUMN shyrka.sy_task_iteration.id_scar IS 'Logical FK to sy_scars.id_scar. NULL = iteration without a scar (direct success or skip). Set when test_result=fail and the lesson was recorded.';
+
+
+--
+-- Name: sy_task_iteration_id_iteration_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+--
+
+CREATE SEQUENCE shyrka.sy_task_iteration_id_iteration_seq
     AS integer
     START WITH 1
     INCREMENT BY 1
@@ -3332,19 +3331,19 @@ CREATE SEQUENCE shyrka.sy_tache_iteration_id_iteration_seq
 
 
 --
--- Name: sy_tache_iteration_id_iteration_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
+-- Name: sy_task_iteration_id_iteration_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
 --
 
-ALTER SEQUENCE shyrka.sy_tache_iteration_id_iteration_seq OWNED BY shyrka.sy_tache_iteration.id_iteration;
+ALTER SEQUENCE shyrka.sy_task_iteration_id_iteration_seq OWNED BY shyrka.sy_task_iteration.id_iteration;
 
 
 --
--- Name: sy_tache_skill; Type: TABLE; Schema: shyrka; Owner: -
+-- Name: sy_task_skill; Type: TABLE; Schema: shyrka; Owner: -
 --
 
-CREATE TABLE shyrka.sy_tache_skill (
-    id_tache_skill integer NOT NULL,
-    id_tache integer NOT NULL,
+CREATE TABLE shyrka.sy_task_skill (
+    id_task_skill integer NOT NULL,
+    id_task integer NOT NULL,
     skill_name character varying(64) NOT NULL,
     "position" integer DEFAULT 0 NOT NULL,
     date_add timestamp with time zone DEFAULT now() NOT NULL
@@ -3352,10 +3351,10 @@ CREATE TABLE shyrka.sy_tache_skill (
 
 
 --
--- Name: sy_tache_skill_id_tache_skill_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+-- Name: sy_task_skill_id_task_skill_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
 --
 
-CREATE SEQUENCE shyrka.sy_tache_skill_id_tache_skill_seq
+CREATE SEQUENCE shyrka.sy_task_skill_id_task_skill_seq
     AS integer
     START WITH 1
     INCREMENT BY 1
@@ -3365,19 +3364,19 @@ CREATE SEQUENCE shyrka.sy_tache_skill_id_tache_skill_seq
 
 
 --
--- Name: sy_tache_skill_id_tache_skill_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
+-- Name: sy_task_skill_id_task_skill_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
 --
 
-ALTER SEQUENCE shyrka.sy_tache_skill_id_tache_skill_seq OWNED BY shyrka.sy_tache_skill.id_tache_skill;
+ALTER SEQUENCE shyrka.sy_task_skill_id_task_skill_seq OWNED BY shyrka.sy_task_skill.id_task_skill;
 
 
 --
--- Name: sy_tache_tool; Type: TABLE; Schema: shyrka; Owner: -
+-- Name: sy_task_tool; Type: TABLE; Schema: shyrka; Owner: -
 --
 
-CREATE TABLE shyrka.sy_tache_tool (
-    id_tache_tool integer NOT NULL,
-    id_tache integer NOT NULL,
+CREATE TABLE shyrka.sy_task_tool (
+    id_task_tool integer NOT NULL,
+    id_task integer NOT NULL,
     id_tool integer NOT NULL,
     "position" integer DEFAULT 0 NOT NULL,
     used_at timestamp with time zone,
@@ -3387,17 +3386,17 @@ CREATE TABLE shyrka.sy_tache_tool (
 
 
 --
--- Name: TABLE sy_tache_tool; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: TABLE sy_task_tool; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_tache_tool IS 'N-N tâche ↔ outils utilisés. Trace : quel outil a servi à réaliser quelle tâche.';
+COMMENT ON TABLE shyrka.sy_task_tool IS 'N-N task <-> tools used. Traces which tool served which task.';
 
 
 --
--- Name: sy_tache_tool_id_tache_tool_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+-- Name: sy_task_tool_id_task_tool_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
 --
 
-CREATE SEQUENCE shyrka.sy_tache_tool_id_tache_tool_seq
+CREATE SEQUENCE shyrka.sy_task_tool_id_task_tool_seq
     AS integer
     START WITH 1
     INCREMENT BY 1
@@ -3407,19 +3406,19 @@ CREATE SEQUENCE shyrka.sy_tache_tool_id_tache_tool_seq
 
 
 --
--- Name: sy_tache_tool_id_tache_tool_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
+-- Name: sy_task_tool_id_task_tool_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
 --
 
-ALTER SEQUENCE shyrka.sy_tache_tool_id_tache_tool_seq OWNED BY shyrka.sy_tache_tool.id_tache_tool;
+ALTER SEQUENCE shyrka.sy_task_tool_id_task_tool_seq OWNED BY shyrka.sy_task_tool.id_task_tool;
 
 
 --
--- Name: sy_travail_agent; Type: TABLE; Schema: shyrka; Owner: -
+-- Name: sy_work_order_agent; Type: TABLE; Schema: shyrka; Owner: -
 --
 
-CREATE TABLE shyrka.sy_travail_agent (
+CREATE TABLE shyrka.sy_work_order_agent (
     id_assignment integer NOT NULL,
-    id_travail integer NOT NULL,
+    id_work_order integer NOT NULL,
     agent_codename character varying(64) NOT NULL,
     role character varying(64),
     is_lead smallint DEFAULT 0 NOT NULL,
@@ -3431,17 +3430,17 @@ CREATE TABLE shyrka.sy_travail_agent (
 
 
 --
--- Name: TABLE sy_travail_agent; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: TABLE sy_work_order_agent; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_travail_agent IS 'N-N travail ↔ agents : qui bosse sur ce travail. is_lead=1 = orchestrateur (max 1 par travail recommandé).';
+COMMENT ON TABLE shyrka.sy_work_order_agent IS 'N-N work order <-> agents: who works on this work order. is_lead=1 = orchestrator (max 1 per work order recommended).';
 
 
 --
--- Name: sy_travail_agent_id_assignment_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+-- Name: sy_work_order_agent_id_assignment_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
 --
 
-CREATE SEQUENCE shyrka.sy_travail_agent_id_assignment_seq
+CREATE SEQUENCE shyrka.sy_work_order_agent_id_assignment_seq
     AS integer
     START WITH 1
     INCREMENT BY 1
@@ -3451,88 +3450,88 @@ CREATE SEQUENCE shyrka.sy_travail_agent_id_assignment_seq
 
 
 --
--- Name: sy_travail_agent_id_assignment_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
+-- Name: sy_work_order_agent_id_assignment_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
 --
 
-ALTER SEQUENCE shyrka.sy_travail_agent_id_assignment_seq OWNED BY shyrka.sy_travail_agent.id_assignment;
+ALTER SEQUENCE shyrka.sy_work_order_agent_id_assignment_seq OWNED BY shyrka.sy_work_order_agent.id_assignment;
 
 
 --
--- Name: sy_travail_dep; Type: TABLE; Schema: shyrka; Owner: -
+-- Name: sy_work_order_dep; Type: TABLE; Schema: shyrka; Owner: -
 --
 
-CREATE TABLE shyrka.sy_travail_dep (
-    id_travail_blocked integer NOT NULL,
-    id_travail_blocker integer NOT NULL,
+CREATE TABLE shyrka.sy_work_order_dep (
+    id_work_order_blocked integer NOT NULL,
+    id_work_order_blocker integer NOT NULL,
     date_add timestamp without time zone DEFAULT now() NOT NULL,
-    CONSTRAINT chk_sy_travail_dep_no_self_loop CHECK ((id_travail_blocked <> id_travail_blocker))
+    CONSTRAINT chk_sy_work_order_dep_no_self_loop CHECK ((id_work_order_blocked <> id_work_order_blocker))
 );
 
 
 --
--- Name: TABLE sy_travail_dep; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: TABLE sy_work_order_dep; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_travail_dep IS 'DAG N:M deps entre travaux — id_travail_blocked ne peut demarrer tant que id_travail_blocker n''est pas done';
-
-
---
--- Name: COLUMN sy_travail_dep.id_travail_blocked; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_travail_dep.id_travail_blocked IS 'Travail bloque (depend de id_travail_blocker)';
+COMMENT ON TABLE shyrka.sy_work_order_dep IS 'N:M dependency DAG between work orders — id_work_order_blocked cannot start until id_work_order_blocker is done';
 
 
 --
--- Name: COLUMN sy_travail_dep.id_travail_blocker; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_work_order_dep.id_work_order_blocked; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_travail_dep.id_travail_blocker IS 'Travail bloqueur (doit etre done avant que id_travail_blocked puisse demarrer)';
+COMMENT ON COLUMN shyrka.sy_work_order_dep.id_work_order_blocked IS 'Blocked work order (depends on id_work_order_blocker)';
 
 
 --
--- Name: sy_travail_review; Type: TABLE; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_work_order_dep.id_work_order_blocker; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-CREATE TABLE shyrka.sy_travail_review (
+COMMENT ON COLUMN shyrka.sy_work_order_dep.id_work_order_blocker IS 'Blocking work order (must be done before id_work_order_blocked can start)';
+
+
+--
+-- Name: sy_work_order_review; Type: TABLE; Schema: shyrka; Owner: -
+--
+
+CREATE TABLE shyrka.sy_work_order_review (
     id_review integer NOT NULL,
-    id_travail integer NOT NULL,
+    id_work_order integer NOT NULL,
     iteration_n integer NOT NULL,
     status character varying(16) DEFAULT 'pending'::character varying NOT NULL,
     reviewed_by character varying(64),
     notes text,
-    id_cicatrice integer,
+    id_scar integer,
     date_add timestamp with time zone DEFAULT now() NOT NULL,
     date_upd timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
 --
--- Name: TABLE sy_travail_review; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: TABLE sy_work_order_review; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_travail_review IS 'Review fondateur d un travail (déclenchée quand toutes les tâches sont done). 1 travail = N reviews (re-review si rejected → cicatrice gravée → retour dev → re-review).';
-
-
---
--- Name: COLUMN sy_travail_review.status; Type: COMMENT; Schema: shyrka; Owner: -
---
-
-COMMENT ON COLUMN shyrka.sy_travail_review.status IS 'pending (en attente) | validated (✓) | rejected (✗ → cicatrice)';
+COMMENT ON TABLE shyrka.sy_work_order_review IS 'Founder review of a work order (triggered when all its tasks are done). 1 work order = N reviews (re-review if rejected → scar recorded → back to dev → re-review).';
 
 
 --
--- Name: COLUMN sy_travail_review.id_cicatrice; Type: COMMENT; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_work_order_review.status; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_travail_review.id_cicatrice IS 'FK logique vers sy_cicatrices.id_cicatrice (renseignée si status=rejected).';
+COMMENT ON COLUMN shyrka.sy_work_order_review.status IS 'pending (awaiting review) | validated (✓) | rejected (✗ → scar)';
 
 
 --
--- Name: sy_travail_review_id_review_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+-- Name: COLUMN sy_work_order_review.id_scar; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-CREATE SEQUENCE shyrka.sy_travail_review_id_review_seq
+COMMENT ON COLUMN shyrka.sy_work_order_review.id_scar IS 'Logical FK to sy_scars.id_scar (set when status=rejected).';
+
+
+--
+-- Name: sy_work_order_review_id_review_seq; Type: SEQUENCE; Schema: shyrka; Owner: -
+--
+
+CREATE SEQUENCE shyrka.sy_work_order_review_id_review_seq
     AS integer
     START WITH 1
     INCREMENT BY 1
@@ -3542,10 +3541,10 @@ CREATE SEQUENCE shyrka.sy_travail_review_id_review_seq
 
 
 --
--- Name: sy_travail_review_id_review_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
+-- Name: sy_work_order_review_id_review_seq; Type: SEQUENCE OWNED BY; Schema: shyrka; Owner: -
 --
 
-ALTER SEQUENCE shyrka.sy_travail_review_id_review_seq OWNED BY shyrka.sy_travail_review.id_review;
+ALTER SEQUENCE shyrka.sy_work_order_review_id_review_seq OWNED BY shyrka.sy_work_order_review.id_review;
 
 
 --
@@ -3566,14 +3565,14 @@ CREATE TABLE shyrka.sy_user (
 -- Name: TABLE sy_user; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON TABLE shyrka.sy_user IS 'Modèle utilisateur centralisé (inspiré Honcho) — remplace les memory/user_*.md éparpillés. Source unique pour contexte utilisateur injecté dans sessions Claude.';
+COMMENT ON TABLE shyrka.sy_user IS 'Centralized user model (inspired by Honcho) — replaces scattered memory/user_*.md files. Single source of user context injected into Claude sessions.';
 
 
 --
 -- Name: COLUMN sy_user.dimensions; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON COLUMN shyrka.sy_user.dimensions IS 'Arbre JSONB : profile, communication_style, schedule, skills, history, preferences, private_only_for_alex.';
+COMMENT ON COLUMN shyrka.sy_user.dimensions IS 'JSONB tree: profile, communication_style, schedule, skills, history, preferences, private_only_for_alex.';
 
 
 --
@@ -3597,24 +3596,24 @@ ALTER SEQUENCE shyrka.sy_user_id_user_seq OWNED BY shyrka.sy_user.id_user;
 
 
 --
--- Name: sy_chantier id_chantier; Type: DEFAULT; Schema: shyrka; Owner: -
+-- Name: sy_jobsite id_jobsite; Type: DEFAULT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_chantier ALTER COLUMN id_chantier SET DEFAULT nextval('shyrka.sy_chantier_id_chantier_seq'::regclass);
-
-
---
--- Name: sy_chantier_travail id_travail; Type: DEFAULT; Schema: shyrka; Owner: -
---
-
-ALTER TABLE ONLY shyrka.sy_chantier_travail ALTER COLUMN id_travail SET DEFAULT nextval('shyrka.sy_chantier_travail_id_travail_seq'::regclass);
+ALTER TABLE ONLY shyrka.sy_jobsite ALTER COLUMN id_jobsite SET DEFAULT nextval('shyrka.sy_jobsite_id_jobsite_seq'::regclass);
 
 
 --
--- Name: sy_cicatrices id_cicatrice; Type: DEFAULT; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_work_order id_work_order; Type: DEFAULT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_cicatrices ALTER COLUMN id_cicatrice SET DEFAULT nextval('shyrka.sy_cicatrices_id_cicatrice_seq'::regclass);
+ALTER TABLE ONLY shyrka.sy_jobsite_work_order ALTER COLUMN id_work_order SET DEFAULT nextval('shyrka.sy_jobsite_work_order_id_work_order_seq'::regclass);
+
+
+--
+-- Name: sy_scars id_scar; Type: DEFAULT; Schema: shyrka; Owner: -
+--
+
+ALTER TABLE ONLY shyrka.sy_scars ALTER COLUMN id_scar SET DEFAULT nextval('shyrka.sy_scars_id_scar_seq'::regclass);
 
 
 --
@@ -3716,52 +3715,52 @@ ALTER TABLE ONLY shyrka.sy_canary_target ALTER COLUMN id_canary SET DEFAULT next
 
 
 --
--- Name: sy_chantier_agent id_assignment; Type: DEFAULT; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_agent id_assignment; Type: DEFAULT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_chantier_agent ALTER COLUMN id_assignment SET DEFAULT nextval('shyrka.sy_chantier_agent_id_assignment_seq'::regclass);
-
-
---
--- Name: sy_chantier_claude_session id_session; Type: DEFAULT; Schema: shyrka; Owner: -
---
-
-ALTER TABLE ONLY shyrka.sy_chantier_claude_session ALTER COLUMN id_session SET DEFAULT nextval('shyrka.sy_chantier_claude_session_id_session_seq'::regclass);
+ALTER TABLE ONLY shyrka.sy_jobsite_agent ALTER COLUMN id_assignment SET DEFAULT nextval('shyrka.sy_jobsite_agent_id_assignment_seq'::regclass);
 
 
 --
--- Name: sy_chantier_qa_run id_run; Type: DEFAULT; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_claude_session id_session; Type: DEFAULT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_chantier_qa_run ALTER COLUMN id_run SET DEFAULT nextval('shyrka.sy_chantier_qa_run_id_run_seq'::regclass);
-
-
---
--- Name: sy_chantier_readiness id_readiness; Type: DEFAULT; Schema: shyrka; Owner: -
---
-
-ALTER TABLE ONLY shyrka.sy_chantier_readiness ALTER COLUMN id_readiness SET DEFAULT nextval('shyrka.sy_chantier_readiness_id_readiness_seq'::regclass);
+ALTER TABLE ONLY shyrka.sy_jobsite_claude_session ALTER COLUMN id_session SET DEFAULT nextval('shyrka.sy_jobsite_claude_session_id_session_seq'::regclass);
 
 
 --
--- Name: sy_chantier_relevance id_relevance; Type: DEFAULT; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_qa_run id_run; Type: DEFAULT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_chantier_relevance ALTER COLUMN id_relevance SET DEFAULT nextval('shyrka.sy_chantier_relevance_id_relevance_seq'::regclass);
-
-
---
--- Name: sy_chantier_tache id_tache; Type: DEFAULT; Schema: shyrka; Owner: -
---
-
-ALTER TABLE ONLY shyrka.sy_chantier_tache ALTER COLUMN id_tache SET DEFAULT nextval('shyrka.cs_chantier_tache_id_tache_seq'::regclass);
+ALTER TABLE ONLY shyrka.sy_jobsite_qa_run ALTER COLUMN id_run SET DEFAULT nextval('shyrka.sy_jobsite_qa_run_id_run_seq'::regclass);
 
 
 --
--- Name: sy_chantier_tool id_tool; Type: DEFAULT; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_readiness id_readiness; Type: DEFAULT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_chantier_tool ALTER COLUMN id_tool SET DEFAULT nextval('shyrka.sy_chantier_tool_id_tool_seq'::regclass);
+ALTER TABLE ONLY shyrka.sy_jobsite_readiness ALTER COLUMN id_readiness SET DEFAULT nextval('shyrka.sy_jobsite_readiness_id_readiness_seq'::regclass);
+
+
+--
+-- Name: sy_jobsite_relevance id_relevance; Type: DEFAULT; Schema: shyrka; Owner: -
+--
+
+ALTER TABLE ONLY shyrka.sy_jobsite_relevance ALTER COLUMN id_relevance SET DEFAULT nextval('shyrka.sy_jobsite_relevance_id_relevance_seq'::regclass);
+
+
+--
+-- Name: sy_jobsite_task id_task; Type: DEFAULT; Schema: shyrka; Owner: -
+--
+
+ALTER TABLE ONLY shyrka.sy_jobsite_task ALTER COLUMN id_task SET DEFAULT nextval('shyrka.cs_jobsite_task_id_task_seq'::regclass);
+
+
+--
+-- Name: sy_jobsite_tool id_tool; Type: DEFAULT; Schema: shyrka; Owner: -
+--
+
+ALTER TABLE ONLY shyrka.sy_jobsite_tool ALTER COLUMN id_tool SET DEFAULT nextval('shyrka.sy_jobsite_tool_id_tool_seq'::regclass);
 
 
 --
@@ -3940,31 +3939,31 @@ ALTER TABLE ONLY shyrka.sy_seo_tracked_keyword ALTER COLUMN id_keyword SET DEFAU
 
 
 --
--- Name: sy_tache_dep id_dep; Type: DEFAULT; Schema: shyrka; Owner: -
+-- Name: sy_task_dep id_dep; Type: DEFAULT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_tache_dep ALTER COLUMN id_dep SET DEFAULT nextval('shyrka.sy_tache_dep_id_dep_seq'::regclass);
-
-
---
--- Name: sy_tache_iteration id_iteration; Type: DEFAULT; Schema: shyrka; Owner: -
---
-
-ALTER TABLE ONLY shyrka.sy_tache_iteration ALTER COLUMN id_iteration SET DEFAULT nextval('shyrka.sy_tache_iteration_id_iteration_seq'::regclass);
+ALTER TABLE ONLY shyrka.sy_task_dep ALTER COLUMN id_dep SET DEFAULT nextval('shyrka.sy_task_dep_id_dep_seq'::regclass);
 
 
 --
--- Name: sy_tache_skill id_tache_skill; Type: DEFAULT; Schema: shyrka; Owner: -
+-- Name: sy_task_iteration id_iteration; Type: DEFAULT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_tache_skill ALTER COLUMN id_tache_skill SET DEFAULT nextval('shyrka.sy_tache_skill_id_tache_skill_seq'::regclass);
+ALTER TABLE ONLY shyrka.sy_task_iteration ALTER COLUMN id_iteration SET DEFAULT nextval('shyrka.sy_task_iteration_id_iteration_seq'::regclass);
 
 
 --
--- Name: sy_tache_tool id_tache_tool; Type: DEFAULT; Schema: shyrka; Owner: -
+-- Name: sy_task_skill id_task_skill; Type: DEFAULT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_tache_tool ALTER COLUMN id_tache_tool SET DEFAULT nextval('shyrka.sy_tache_tool_id_tache_tool_seq'::regclass);
+ALTER TABLE ONLY shyrka.sy_task_skill ALTER COLUMN id_task_skill SET DEFAULT nextval('shyrka.sy_task_skill_id_task_skill_seq'::regclass);
+
+
+--
+-- Name: sy_task_tool id_task_tool; Type: DEFAULT; Schema: shyrka; Owner: -
+--
+
+ALTER TABLE ONLY shyrka.sy_task_tool ALTER COLUMN id_task_tool SET DEFAULT nextval('shyrka.sy_task_tool_id_task_tool_seq'::regclass);
 
 
 --
@@ -3975,17 +3974,17 @@ ALTER TABLE ONLY shyrka.sy_task_run ALTER COLUMN id_task_run SET DEFAULT nextval
 
 
 --
--- Name: sy_travail_agent id_assignment; Type: DEFAULT; Schema: shyrka; Owner: -
+-- Name: sy_work_order_agent id_assignment; Type: DEFAULT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_travail_agent ALTER COLUMN id_assignment SET DEFAULT nextval('shyrka.sy_travail_agent_id_assignment_seq'::regclass);
+ALTER TABLE ONLY shyrka.sy_work_order_agent ALTER COLUMN id_assignment SET DEFAULT nextval('shyrka.sy_work_order_agent_id_assignment_seq'::regclass);
 
 
 --
--- Name: sy_travail_review id_review; Type: DEFAULT; Schema: shyrka; Owner: -
+-- Name: sy_work_order_review id_review; Type: DEFAULT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_travail_review ALTER COLUMN id_review SET DEFAULT nextval('shyrka.sy_travail_review_id_review_seq'::regclass);
+ALTER TABLE ONLY shyrka.sy_work_order_review ALTER COLUMN id_review SET DEFAULT nextval('shyrka.sy_work_order_review_id_review_seq'::regclass);
 
 
 --
@@ -3996,11 +3995,11 @@ ALTER TABLE ONLY shyrka.sy_user ALTER COLUMN id_user SET DEFAULT nextval('shyrka
 
 
 --
--- Name: sy_chantier_tache cs_chantier_tache_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_task cs_jobsite_task_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_chantier_tache
-    ADD CONSTRAINT cs_chantier_tache_pkey PRIMARY KEY (id_tache);
+ALTER TABLE ONLY shyrka.sy_jobsite_task
+    ADD CONSTRAINT cs_jobsite_task_pkey PRIMARY KEY (id_task);
 
 
 --
@@ -4020,35 +4019,35 @@ ALTER TABLE ONLY shyrka.sy_task_run
 
 
 --
--- Name: sy_travail_dep pk_sy_travail_dep; Type: CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_work_order_dep pk_sy_work_order_dep; Type: CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_travail_dep
-    ADD CONSTRAINT pk_sy_travail_dep PRIMARY KEY (id_travail_blocked, id_travail_blocker);
-
-
---
--- Name: sy_chantier sy_chantier_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
---
-
-ALTER TABLE ONLY shyrka.sy_chantier
-    ADD CONSTRAINT sy_chantier_pkey PRIMARY KEY (id_chantier);
+ALTER TABLE ONLY shyrka.sy_work_order_dep
+    ADD CONSTRAINT pk_sy_work_order_dep PRIMARY KEY (id_work_order_blocked, id_work_order_blocker);
 
 
 --
--- Name: sy_chantier_travail sy_chantier_travail_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_jobsite sy_jobsite_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_chantier_travail
-    ADD CONSTRAINT sy_chantier_travail_pkey PRIMARY KEY (id_travail);
+ALTER TABLE ONLY shyrka.sy_jobsite
+    ADD CONSTRAINT sy_jobsite_pkey PRIMARY KEY (id_jobsite);
 
 
 --
--- Name: sy_cicatrices sy_cicatrices_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_work_order sy_jobsite_work_order_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_cicatrices
-    ADD CONSTRAINT sy_cicatrices_pkey PRIMARY KEY (id_cicatrice);
+ALTER TABLE ONLY shyrka.sy_jobsite_work_order
+    ADD CONSTRAINT sy_jobsite_work_order_pkey PRIMARY KEY (id_work_order);
+
+
+--
+-- Name: sy_scars sy_scars_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+--
+
+ALTER TABLE ONLY shyrka.sy_scars
+    ADD CONSTRAINT sy_scars_pkey PRIMARY KEY (id_scar);
 
 
 --
@@ -4164,11 +4163,11 @@ ALTER TABLE ONLY shyrka.sy_automate_agents
 
 
 --
--- Name: sy_automate_conduites sy_automate_conduites_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_automate_playbooks sy_automate_playbooks_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_automate_conduites
-    ADD CONSTRAINT sy_automate_conduites_pkey PRIMARY KEY (id_automate, conduite_slug, step_position);
+ALTER TABLE ONLY shyrka.sy_automate_playbooks
+    ADD CONSTRAINT sy_automate_playbooks_pkey PRIMARY KEY (id_automate, playbook_slug, step_position);
 
 
 --
@@ -4220,75 +4219,75 @@ ALTER TABLE ONLY shyrka.sy_canary_target
 
 
 --
--- Name: sy_chantier_agent sy_chantier_agent_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_agent sy_jobsite_agent_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_chantier_agent
-    ADD CONSTRAINT sy_chantier_agent_pkey PRIMARY KEY (id_assignment);
-
-
---
--- Name: sy_chantier_claude_session sy_chantier_claude_session_jsonl_uuid_key; Type: CONSTRAINT; Schema: shyrka; Owner: -
---
-
-ALTER TABLE ONLY shyrka.sy_chantier_claude_session
-    ADD CONSTRAINT sy_chantier_claude_session_jsonl_uuid_key UNIQUE (jsonl_uuid);
+ALTER TABLE ONLY shyrka.sy_jobsite_agent
+    ADD CONSTRAINT sy_jobsite_agent_pkey PRIMARY KEY (id_assignment);
 
 
 --
--- Name: sy_chantier_claude_session sy_chantier_claude_session_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_claude_session sy_jobsite_claude_session_jsonl_uuid_key; Type: CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_chantier_claude_session
-    ADD CONSTRAINT sy_chantier_claude_session_pkey PRIMARY KEY (id_session);
-
-
---
--- Name: sy_chantier_lock sy_chantier_lock_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
---
-
-ALTER TABLE ONLY shyrka.sy_chantier_lock
-    ADD CONSTRAINT sy_chantier_lock_pkey PRIMARY KEY (id_chantier, owner_kind);
+ALTER TABLE ONLY shyrka.sy_jobsite_claude_session
+    ADD CONSTRAINT sy_jobsite_claude_session_jsonl_uuid_key UNIQUE (jsonl_uuid);
 
 
 --
--- Name: sy_chantier_qa_run sy_chantier_qa_run_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_claude_session sy_jobsite_claude_session_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_chantier_qa_run
-    ADD CONSTRAINT sy_chantier_qa_run_pkey PRIMARY KEY (id_run);
-
-
---
--- Name: sy_chantier_readiness sy_chantier_readiness_id_chantier_key; Type: CONSTRAINT; Schema: shyrka; Owner: -
---
-
-ALTER TABLE ONLY shyrka.sy_chantier_readiness
-    ADD CONSTRAINT sy_chantier_readiness_id_chantier_key UNIQUE (id_chantier);
+ALTER TABLE ONLY shyrka.sy_jobsite_claude_session
+    ADD CONSTRAINT sy_jobsite_claude_session_pkey PRIMARY KEY (id_session);
 
 
 --
--- Name: sy_chantier_readiness sy_chantier_readiness_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_lock sy_jobsite_lock_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_chantier_readiness
-    ADD CONSTRAINT sy_chantier_readiness_pkey PRIMARY KEY (id_readiness);
-
-
---
--- Name: sy_chantier_relevance sy_chantier_relevance_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
---
-
-ALTER TABLE ONLY shyrka.sy_chantier_relevance
-    ADD CONSTRAINT sy_chantier_relevance_pkey PRIMARY KEY (id_relevance);
+ALTER TABLE ONLY shyrka.sy_jobsite_lock
+    ADD CONSTRAINT sy_jobsite_lock_pkey PRIMARY KEY (id_jobsite, owner_kind);
 
 
 --
--- Name: sy_chantier_tool sy_chantier_tool_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_qa_run sy_jobsite_qa_run_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_chantier_tool
-    ADD CONSTRAINT sy_chantier_tool_pkey PRIMARY KEY (id_tool);
+ALTER TABLE ONLY shyrka.sy_jobsite_qa_run
+    ADD CONSTRAINT sy_jobsite_qa_run_pkey PRIMARY KEY (id_run);
+
+
+--
+-- Name: sy_jobsite_readiness sy_jobsite_readiness_id_jobsite_key; Type: CONSTRAINT; Schema: shyrka; Owner: -
+--
+
+ALTER TABLE ONLY shyrka.sy_jobsite_readiness
+    ADD CONSTRAINT sy_jobsite_readiness_id_jobsite_key UNIQUE (id_jobsite);
+
+
+--
+-- Name: sy_jobsite_readiness sy_jobsite_readiness_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+--
+
+ALTER TABLE ONLY shyrka.sy_jobsite_readiness
+    ADD CONSTRAINT sy_jobsite_readiness_pkey PRIMARY KEY (id_readiness);
+
+
+--
+-- Name: sy_jobsite_relevance sy_jobsite_relevance_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+--
+
+ALTER TABLE ONLY shyrka.sy_jobsite_relevance
+    ADD CONSTRAINT sy_jobsite_relevance_pkey PRIMARY KEY (id_relevance);
+
+
+--
+-- Name: sy_jobsite_tool sy_jobsite_tool_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+--
+
+ALTER TABLE ONLY shyrka.sy_jobsite_tool
+    ADD CONSTRAINT sy_jobsite_tool_pkey PRIMARY KEY (id_tool);
 
 
 --
@@ -4636,91 +4635,91 @@ ALTER TABLE ONLY shyrka.sy_seo_tracked_keyword
 
 
 --
--- Name: sy_tache_dep sy_tache_dep_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_task_dep sy_task_dep_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_tache_dep
-    ADD CONSTRAINT sy_tache_dep_pkey PRIMARY KEY (id_dep);
-
-
---
--- Name: sy_tache_iteration sy_tache_iteration_id_tache_iteration_n_key; Type: CONSTRAINT; Schema: shyrka; Owner: -
---
-
-ALTER TABLE ONLY shyrka.sy_tache_iteration
-    ADD CONSTRAINT sy_tache_iteration_id_tache_iteration_n_key UNIQUE (id_tache, iteration_n);
+ALTER TABLE ONLY shyrka.sy_task_dep
+    ADD CONSTRAINT sy_task_dep_pkey PRIMARY KEY (id_dep);
 
 
 --
--- Name: sy_tache_iteration sy_tache_iteration_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_task_iteration sy_task_iteration_id_task_iteration_n_key; Type: CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_tache_iteration
-    ADD CONSTRAINT sy_tache_iteration_pkey PRIMARY KEY (id_iteration);
-
-
---
--- Name: sy_tache_skill sy_tache_skill_id_tache_skill_name_key; Type: CONSTRAINT; Schema: shyrka; Owner: -
---
-
-ALTER TABLE ONLY shyrka.sy_tache_skill
-    ADD CONSTRAINT sy_tache_skill_id_tache_skill_name_key UNIQUE (id_tache, skill_name);
+ALTER TABLE ONLY shyrka.sy_task_iteration
+    ADD CONSTRAINT sy_task_iteration_id_task_iteration_n_key UNIQUE (id_task, iteration_n);
 
 
 --
--- Name: sy_tache_skill sy_tache_skill_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_task_iteration sy_task_iteration_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_tache_skill
-    ADD CONSTRAINT sy_tache_skill_pkey PRIMARY KEY (id_tache_skill);
-
-
---
--- Name: sy_tache_tool sy_tache_tool_id_tache_id_tool_key; Type: CONSTRAINT; Schema: shyrka; Owner: -
---
-
-ALTER TABLE ONLY shyrka.sy_tache_tool
-    ADD CONSTRAINT sy_tache_tool_id_tache_id_tool_key UNIQUE (id_tache, id_tool);
+ALTER TABLE ONLY shyrka.sy_task_iteration
+    ADD CONSTRAINT sy_task_iteration_pkey PRIMARY KEY (id_iteration);
 
 
 --
--- Name: sy_tache_tool sy_tache_tool_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_task_skill sy_task_skill_id_task_skill_name_key; Type: CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_tache_tool
-    ADD CONSTRAINT sy_tache_tool_pkey PRIMARY KEY (id_tache_tool);
-
-
---
--- Name: sy_travail_agent sy_travail_agent_id_travail_agent_codename_key; Type: CONSTRAINT; Schema: shyrka; Owner: -
---
-
-ALTER TABLE ONLY shyrka.sy_travail_agent
-    ADD CONSTRAINT sy_travail_agent_id_travail_agent_codename_key UNIQUE (id_travail, agent_codename);
+ALTER TABLE ONLY shyrka.sy_task_skill
+    ADD CONSTRAINT sy_task_skill_id_task_skill_name_key UNIQUE (id_task, skill_name);
 
 
 --
--- Name: sy_travail_agent sy_travail_agent_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_task_skill sy_task_skill_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_travail_agent
-    ADD CONSTRAINT sy_travail_agent_pkey PRIMARY KEY (id_assignment);
-
-
---
--- Name: sy_travail_review sy_travail_review_id_travail_iteration_n_key; Type: CONSTRAINT; Schema: shyrka; Owner: -
---
-
-ALTER TABLE ONLY shyrka.sy_travail_review
-    ADD CONSTRAINT sy_travail_review_id_travail_iteration_n_key UNIQUE (id_travail, iteration_n);
+ALTER TABLE ONLY shyrka.sy_task_skill
+    ADD CONSTRAINT sy_task_skill_pkey PRIMARY KEY (id_task_skill);
 
 
 --
--- Name: sy_travail_review sy_travail_review_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_task_tool sy_task_tool_id_task_id_tool_key; Type: CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_travail_review
-    ADD CONSTRAINT sy_travail_review_pkey PRIMARY KEY (id_review);
+ALTER TABLE ONLY shyrka.sy_task_tool
+    ADD CONSTRAINT sy_task_tool_id_task_id_tool_key UNIQUE (id_task, id_tool);
+
+
+--
+-- Name: sy_task_tool sy_task_tool_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+--
+
+ALTER TABLE ONLY shyrka.sy_task_tool
+    ADD CONSTRAINT sy_task_tool_pkey PRIMARY KEY (id_task_tool);
+
+
+--
+-- Name: sy_work_order_agent sy_work_order_agent_id_work_order_agent_codename_key; Type: CONSTRAINT; Schema: shyrka; Owner: -
+--
+
+ALTER TABLE ONLY shyrka.sy_work_order_agent
+    ADD CONSTRAINT sy_work_order_agent_id_work_order_agent_codename_key UNIQUE (id_work_order, agent_codename);
+
+
+--
+-- Name: sy_work_order_agent sy_work_order_agent_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+--
+
+ALTER TABLE ONLY shyrka.sy_work_order_agent
+    ADD CONSTRAINT sy_work_order_agent_pkey PRIMARY KEY (id_assignment);
+
+
+--
+-- Name: sy_work_order_review sy_work_order_review_id_work_order_iteration_n_key; Type: CONSTRAINT; Schema: shyrka; Owner: -
+--
+
+ALTER TABLE ONLY shyrka.sy_work_order_review
+    ADD CONSTRAINT sy_work_order_review_id_work_order_iteration_n_key UNIQUE (id_work_order, iteration_n);
+
+
+--
+-- Name: sy_work_order_review sy_work_order_review_pkey; Type: CONSTRAINT; Schema: shyrka; Owner: -
+--
+
+ALTER TABLE ONLY shyrka.sy_work_order_review
+    ADD CONSTRAINT sy_work_order_review_pkey PRIMARY KEY (id_review);
 
 
 --
@@ -4740,19 +4739,19 @@ ALTER TABLE ONLY shyrka.sy_user
 
 
 --
--- Name: sy_chantier_agent uk_chantier_agent_role; Type: CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_agent uk_jobsite_agent_role; Type: CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_chantier_agent
-    ADD CONSTRAINT uk_chantier_agent_role UNIQUE (id_chantier, agent_codename, role);
+ALTER TABLE ONLY shyrka.sy_jobsite_agent
+    ADD CONSTRAINT uk_jobsite_agent_role UNIQUE (id_jobsite, agent_codename, role);
 
 
 --
--- Name: sy_tache_dep uq_sy_tache_dep; Type: CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_task_dep uq_sy_task_dep; Type: CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_tache_dep
-    ADD CONSTRAINT uq_sy_tache_dep UNIQUE (id_tache_blocked, id_tache_blocker);
+ALTER TABLE ONLY shyrka.sy_task_dep
+    ADD CONSTRAINT uq_sy_task_dep UNIQUE (id_task_blocked, id_task_blocker);
 
 
 --
@@ -4861,94 +4860,94 @@ CREATE INDEX idx_agents_position ON shyrka.sy_agents USING btree ("position");
 
 
 --
--- Name: idx_chantier_auto_explode_active; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_jobsite_auto_explode_active; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_chantier_auto_explode_active ON shyrka.sy_chantier USING btree (id_chantier) WHERE ((auto_explode = true) AND ((status)::text = ANY ((ARRAY['planning'::character varying, 'discovery'::character varying, 'dev'::character varying, 'paused'::character varying])::text[])));
-
-
---
--- Name: idx_chantier_id_customer; Type: INDEX; Schema: shyrka; Owner: -
---
-
-CREATE INDEX idx_chantier_id_customer ON shyrka.sy_chantier USING btree (id_customer);
+CREATE INDEX idx_jobsite_auto_explode_active ON shyrka.sy_jobsite USING btree (id_jobsite) WHERE ((auto_explode = true) AND ((status)::text = ANY ((ARRAY['planning'::character varying, 'discovery'::character varying, 'dev'::character varying, 'paused'::character varying])::text[])));
 
 
 --
--- Name: idx_chantier_id_tenant; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_jobsite_id_customer; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_chantier_id_tenant ON shyrka.sy_chantier USING btree (id_tenant);
-
-
---
--- Name: idx_chantier_lock_last_activity; Type: INDEX; Schema: shyrka; Owner: -
---
-
-CREATE INDEX idx_chantier_lock_last_activity ON shyrka.sy_chantier_lock USING btree (last_activity);
+CREATE INDEX idx_jobsite_id_customer ON shyrka.sy_jobsite USING btree (id_customer);
 
 
 --
--- Name: idx_cicatrices_agent; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_jobsite_id_tenant; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_cicatrices_agent ON shyrka.sy_cicatrices USING btree (agent_codename);
-
-
---
--- Name: idx_cicatrices_archive_candidate; Type: INDEX; Schema: shyrka; Owner: -
---
-
-CREATE INDEX idx_cicatrices_archive_candidate ON shyrka.sy_cicatrices USING btree (date_add) WHERE ((resolved = 1) AND (recall_count = 0));
+CREATE INDEX idx_jobsite_id_tenant ON shyrka.sy_jobsite USING btree (id_tenant);
 
 
 --
--- Name: idx_cicatrices_date; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_jobsite_lock_last_activity; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_cicatrices_date ON shyrka.sy_cicatrices USING btree (date_add DESC);
-
-
---
--- Name: idx_cicatrices_dup_signature_unique; Type: INDEX; Schema: shyrka; Owner: -
---
-
-CREATE UNIQUE INDEX idx_cicatrices_dup_signature_unique ON shyrka.sy_cicatrices USING btree (dup_signature) WHERE (dup_signature IS NOT NULL);
+CREATE INDEX idx_jobsite_lock_last_activity ON shyrka.sy_jobsite_lock USING btree (last_activity);
 
 
 --
--- Name: idx_cicatrices_guardrail_todo; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_scars_agent; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_cicatrices_guardrail_todo ON shyrka.sy_cicatrices USING btree (guardrail_status) WHERE ((guardrail_status)::text = 'todo'::text);
-
-
---
--- Name: idx_cicatrices_id_chantier; Type: INDEX; Schema: shyrka; Owner: -
---
-
-CREATE INDEX idx_cicatrices_id_chantier ON shyrka.sy_cicatrices USING btree (id_chantier) WHERE (id_chantier IS NOT NULL);
+CREATE INDEX idx_scars_agent ON shyrka.sy_scars USING btree (agent_codename);
 
 
 --
--- Name: idx_cicatrices_kind; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_scars_archive_candidate; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_cicatrices_kind ON shyrka.sy_cicatrices USING btree (kind);
-
-
---
--- Name: idx_cicatrices_public_status; Type: INDEX; Schema: shyrka; Owner: -
---
-
-CREATE INDEX idx_cicatrices_public_status ON shyrka.sy_cicatrices USING btree (public_status) WHERE (public_status IS NOT NULL);
+CREATE INDEX idx_scars_archive_candidate ON shyrka.sy_scars USING btree (date_add) WHERE ((resolved = 1) AND (recall_count = 0));
 
 
 --
--- Name: idx_cicatrices_severity; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_scars_date; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_cicatrices_severity ON shyrka.sy_cicatrices USING btree (severity);
+CREATE INDEX idx_scars_date ON shyrka.sy_scars USING btree (date_add DESC);
+
+
+--
+-- Name: idx_scars_dup_signature_unique; Type: INDEX; Schema: shyrka; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_scars_dup_signature_unique ON shyrka.sy_scars USING btree (dup_signature) WHERE (dup_signature IS NOT NULL);
+
+
+--
+-- Name: idx_scars_guardrail_todo; Type: INDEX; Schema: shyrka; Owner: -
+--
+
+CREATE INDEX idx_scars_guardrail_todo ON shyrka.sy_scars USING btree (guardrail_status) WHERE ((guardrail_status)::text = 'todo'::text);
+
+
+--
+-- Name: idx_scars_id_jobsite; Type: INDEX; Schema: shyrka; Owner: -
+--
+
+CREATE INDEX idx_scars_id_jobsite ON shyrka.sy_scars USING btree (id_jobsite) WHERE (id_jobsite IS NOT NULL);
+
+
+--
+-- Name: idx_scars_kind; Type: INDEX; Schema: shyrka; Owner: -
+--
+
+CREATE INDEX idx_scars_kind ON shyrka.sy_scars USING btree (kind);
+
+
+--
+-- Name: idx_scars_public_status; Type: INDEX; Schema: shyrka; Owner: -
+--
+
+CREATE INDEX idx_scars_public_status ON shyrka.sy_scars USING btree (public_status) WHERE (public_status IS NOT NULL);
+
+
+--
+-- Name: idx_scars_severity; Type: INDEX; Schema: shyrka; Owner: -
+--
+
+CREATE INDEX idx_scars_severity ON shyrka.sy_scars USING btree (severity);
 
 
 --
@@ -4966,31 +4965,31 @@ CREATE INDEX idx_job_queue_status ON shyrka.sy_job_queue USING btree (status);
 
 
 --
--- Name: idx_sy_chantier_archived; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_sy_jobsite_archived; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_sy_chantier_archived ON shyrka.sy_chantier USING btree (archived_at) WHERE (archived_at IS NULL);
-
-
---
--- Name: idx_sy_chantier_scope; Type: INDEX; Schema: shyrka; Owner: -
---
-
-CREATE INDEX idx_sy_chantier_scope ON shyrka.sy_chantier USING btree (scope) WHERE (archived_at IS NULL);
+CREATE INDEX idx_sy_jobsite_archived ON shyrka.sy_jobsite USING btree (archived_at) WHERE (archived_at IS NULL);
 
 
 --
--- Name: idx_qa_run_chantier_date; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_sy_jobsite_scope; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_qa_run_chantier_date ON shyrka.sy_chantier_qa_run USING btree (id_chantier, date_add DESC);
+CREATE INDEX idx_sy_jobsite_scope ON shyrka.sy_jobsite USING btree (scope) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: idx_qa_run_jobsite_date; Type: INDEX; Schema: shyrka; Owner: -
+--
+
+CREATE INDEX idx_qa_run_jobsite_date ON shyrka.sy_jobsite_qa_run USING btree (id_jobsite, date_add DESC);
 
 
 --
 -- Name: idx_qa_run_status; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_qa_run_status ON shyrka.sy_chantier_qa_run USING btree (status, date_add DESC);
+CREATE INDEX idx_qa_run_status ON shyrka.sy_jobsite_qa_run USING btree (status, date_add DESC);
 
 
 --
@@ -5029,66 +5028,66 @@ CREATE INDEX idx_sy_automate_llm_run_script_ts ON shyrka.sy_automate_llm_run USI
 
 
 --
--- Name: idx_sy_chantier_agent_chantier; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_sy_jobsite_agent_jobsite; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_sy_chantier_agent_chantier ON shyrka.sy_chantier_agent USING btree (id_chantier);
-
-
---
--- Name: idx_sy_chantier_agent_role; Type: INDEX; Schema: shyrka; Owner: -
---
-
-CREATE INDEX idx_sy_chantier_agent_role ON shyrka.sy_chantier_agent USING btree (role);
+CREATE INDEX idx_sy_jobsite_agent_jobsite ON shyrka.sy_jobsite_agent USING btree (id_jobsite);
 
 
 --
--- Name: idx_sy_chantier_tache_assignee; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_sy_jobsite_agent_role; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_sy_chantier_tache_assignee ON shyrka.sy_chantier_tache USING btree (assignee_codename);
-
-
---
--- Name: idx_sy_chantier_tache_replay; Type: INDEX; Schema: shyrka; Owner: -
---
-
-CREATE INDEX idx_sy_chantier_tache_replay ON shyrka.sy_chantier_tache USING btree (replay_on_reset) WHERE ((replay_on_reset = 1) AND (replayed_at IS NULL));
+CREATE INDEX idx_sy_jobsite_agent_role ON shyrka.sy_jobsite_agent USING btree (role);
 
 
 --
--- Name: idx_sy_chantier_tache_scope; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_sy_jobsite_task_assignee; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_sy_chantier_tache_scope ON shyrka.sy_chantier_tache USING btree (scope);
-
-
---
--- Name: idx_sy_chantier_tache_status; Type: INDEX; Schema: shyrka; Owner: -
---
-
-CREATE INDEX idx_sy_chantier_tache_status ON shyrka.sy_chantier_tache USING btree (status);
+CREATE INDEX idx_sy_jobsite_task_assignee ON shyrka.sy_jobsite_task USING btree (assignee_codename);
 
 
 --
--- Name: idx_sy_chantier_tache_travail; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_sy_jobsite_task_replay; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_sy_chantier_tache_travail ON shyrka.sy_chantier_tache USING btree (id_travail, "position");
-
-
---
--- Name: idx_sy_chantier_tool_chantier; Type: INDEX; Schema: shyrka; Owner: -
---
-
-CREATE INDEX idx_sy_chantier_tool_chantier ON shyrka.sy_chantier_tool USING btree (id_chantier, "position");
+CREATE INDEX idx_sy_jobsite_task_replay ON shyrka.sy_jobsite_task USING btree (replay_on_reset) WHERE ((replay_on_reset = 1) AND (replayed_at IS NULL));
 
 
 --
--- Name: idx_sy_chantier_tool_slug; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_sy_jobsite_task_scope; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_sy_chantier_tool_slug ON shyrka.sy_chantier_tool USING btree (slug);
+CREATE INDEX idx_sy_jobsite_task_scope ON shyrka.sy_jobsite_task USING btree (scope);
+
+
+--
+-- Name: idx_sy_jobsite_task_status; Type: INDEX; Schema: shyrka; Owner: -
+--
+
+CREATE INDEX idx_sy_jobsite_task_status ON shyrka.sy_jobsite_task USING btree (status);
+
+
+--
+-- Name: idx_sy_jobsite_task_work_order; Type: INDEX; Schema: shyrka; Owner: -
+--
+
+CREATE INDEX idx_sy_jobsite_task_work_order ON shyrka.sy_jobsite_task USING btree (id_work_order, "position");
+
+
+--
+-- Name: idx_sy_jobsite_tool_jobsite; Type: INDEX; Schema: shyrka; Owner: -
+--
+
+CREATE INDEX idx_sy_jobsite_tool_jobsite ON shyrka.sy_jobsite_tool USING btree (id_jobsite, "position");
+
+
+--
+-- Name: idx_sy_jobsite_tool_slug; Type: INDEX; Schema: shyrka; Owner: -
+--
+
+CREATE INDEX idx_sy_jobsite_tool_slug ON shyrka.sy_jobsite_tool USING btree (slug);
 
 
 --
@@ -5239,52 +5238,52 @@ CREATE INDEX idx_sy_reflex_proposal_status ON shyrka.sy_reflex_proposal USING bt
 
 
 --
--- Name: idx_sy_tache_dep_blocker; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_sy_task_dep_blocker; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_sy_tache_dep_blocker ON shyrka.sy_tache_dep USING btree (id_tache_blocker);
-
-
---
--- Name: idx_sy_tache_iteration_agent; Type: INDEX; Schema: shyrka; Owner: -
---
-
-CREATE INDEX idx_sy_tache_iteration_agent ON shyrka.sy_tache_iteration USING btree (agent_codename);
+CREATE INDEX idx_sy_task_dep_blocker ON shyrka.sy_task_dep USING btree (id_task_blocker);
 
 
 --
--- Name: idx_sy_tache_iteration_tache; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_sy_task_iteration_agent; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_sy_tache_iteration_tache ON shyrka.sy_tache_iteration USING btree (id_tache, iteration_n);
-
-
---
--- Name: idx_sy_tache_skill_name; Type: INDEX; Schema: shyrka; Owner: -
---
-
-CREATE INDEX idx_sy_tache_skill_name ON shyrka.sy_tache_skill USING btree (skill_name);
+CREATE INDEX idx_sy_task_iteration_agent ON shyrka.sy_task_iteration USING btree (agent_codename);
 
 
 --
--- Name: idx_sy_tache_skill_tache; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_sy_task_iteration_task; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_sy_tache_skill_tache ON shyrka.sy_tache_skill USING btree (id_tache, "position");
-
-
---
--- Name: idx_sy_tache_tool_tache; Type: INDEX; Schema: shyrka; Owner: -
---
-
-CREATE INDEX idx_sy_tache_tool_tache ON shyrka.sy_tache_tool USING btree (id_tache, "position");
+CREATE INDEX idx_sy_task_iteration_task ON shyrka.sy_task_iteration USING btree (id_task, iteration_n);
 
 
 --
--- Name: idx_sy_tache_tool_tool; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_sy_task_skill_name; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_sy_tache_tool_tool ON shyrka.sy_tache_tool USING btree (id_tool);
+CREATE INDEX idx_sy_task_skill_name ON shyrka.sy_task_skill USING btree (skill_name);
+
+
+--
+-- Name: idx_sy_task_skill_task; Type: INDEX; Schema: shyrka; Owner: -
+--
+
+CREATE INDEX idx_sy_task_skill_task ON shyrka.sy_task_skill USING btree (id_task, "position");
+
+
+--
+-- Name: idx_sy_task_tool_task; Type: INDEX; Schema: shyrka; Owner: -
+--
+
+CREATE INDEX idx_sy_task_tool_task ON shyrka.sy_task_tool USING btree (id_task, "position");
+
+
+--
+-- Name: idx_sy_task_tool_tool; Type: INDEX; Schema: shyrka; Owner: -
+--
+
+CREATE INDEX idx_sy_task_tool_tool ON shyrka.sy_task_tool USING btree (id_tool);
 
 
 --
@@ -5316,59 +5315,59 @@ CREATE INDEX idx_sy_task_run_status ON shyrka.sy_task_run USING btree (status);
 
 
 --
--- Name: idx_sy_travail_agent_agent; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_sy_work_order_agent_agent; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_sy_travail_agent_agent ON shyrka.sy_travail_agent USING btree (agent_codename);
-
-
---
--- Name: idx_sy_travail_agent_travail; Type: INDEX; Schema: shyrka; Owner: -
---
-
-CREATE INDEX idx_sy_travail_agent_travail ON shyrka.sy_travail_agent USING btree (id_travail, "position");
+CREATE INDEX idx_sy_work_order_agent_agent ON shyrka.sy_work_order_agent USING btree (agent_codename);
 
 
 --
--- Name: idx_sy_travail_dep_blocker; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_sy_work_order_agent_work_order; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_sy_travail_dep_blocker ON shyrka.sy_travail_dep USING btree (id_travail_blocker);
-
-
---
--- Name: idx_sy_travail_review_status; Type: INDEX; Schema: shyrka; Owner: -
---
-
-CREATE INDEX idx_sy_travail_review_status ON shyrka.sy_travail_review USING btree (status);
+CREATE INDEX idx_sy_work_order_agent_work_order ON shyrka.sy_work_order_agent USING btree (id_work_order, "position");
 
 
 --
--- Name: idx_sy_travail_review_travail; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_sy_work_order_dep_blocker; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_sy_travail_review_travail ON shyrka.sy_travail_review USING btree (id_travail, iteration_n);
-
-
---
--- Name: idx_travail_auto_armable; Type: INDEX; Schema: shyrka; Owner: -
---
-
-CREATE INDEX idx_travail_auto_armable ON shyrka.sy_chantier_travail USING btree (id_chantier) WHERE (auto_disabled_at IS NULL);
+CREATE INDEX idx_sy_work_order_dep_blocker ON shyrka.sy_work_order_dep USING btree (id_work_order_blocker);
 
 
 --
--- Name: idx_travail_depends_on; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_sy_work_order_review_status; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_travail_depends_on ON shyrka.sy_chantier_travail USING btree (depends_on_travail_id) WHERE (depends_on_travail_id IS NOT NULL);
+CREATE INDEX idx_sy_work_order_review_status ON shyrka.sy_work_order_review USING btree (status);
 
 
 --
--- Name: idx_travail_resolves; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: idx_sy_work_order_review_work_order; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX idx_travail_resolves ON shyrka.sy_chantier_travail USING btree (resolves_travail_id) WHERE (resolves_travail_id IS NOT NULL);
+CREATE INDEX idx_sy_work_order_review_work_order ON shyrka.sy_work_order_review USING btree (id_work_order, iteration_n);
+
+
+--
+-- Name: idx_work_order_auto_armable; Type: INDEX; Schema: shyrka; Owner: -
+--
+
+CREATE INDEX idx_work_order_auto_armable ON shyrka.sy_jobsite_work_order USING btree (id_jobsite) WHERE (auto_disabled_at IS NULL);
+
+
+--
+-- Name: idx_work_order_depends_on; Type: INDEX; Schema: shyrka; Owner: -
+--
+
+CREATE INDEX idx_work_order_depends_on ON shyrka.sy_jobsite_work_order USING btree (depends_on_work_order_id) WHERE (depends_on_work_order_id IS NOT NULL);
+
+
+--
+-- Name: idx_work_order_resolves; Type: INDEX; Schema: shyrka; Owner: -
+--
+
+CREATE INDEX idx_work_order_resolves ON shyrka.sy_jobsite_work_order USING btree (resolves_work_order_id) WHERE (resolves_work_order_id IS NOT NULL);
 
 
 --
@@ -5396,7 +5395,7 @@ CREATE INDEX sy_agent_event_type_ix ON shyrka.sy_agent_event USING btree (event_
 -- Name: INDEX sy_agent_event_type_ix; Type: COMMENT; Schema: shyrka; Owner: -
 --
 
-COMMENT ON INDEX shyrka.sy_agent_event_type_ix IS 'Accélérateur de la retention/purge (chantier #544) : cible les event_type éligibles sans seq scan. Ne verrouille pas les écritures (CONCURRENTLY).';
+COMMENT ON INDEX shyrka.sy_agent_event_type_ix IS 'Speeds up retention/purge: targets eligible event_type rows without a seq scan. Does not lock writes (CONCURRENTLY).';
 
 
 --
@@ -5414,17 +5413,17 @@ CREATE INDEX sy_atlas_spawn_event_tool_ix ON shyrka.sy_agent_event USING btree (
 
 
 --
--- Name: sy_chantier_relevance_chantier_uniq; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_relevance_jobsite_uniq; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE UNIQUE INDEX sy_chantier_relevance_chantier_uniq ON shyrka.sy_chantier_relevance USING btree (id_chantier);
+CREATE UNIQUE INDEX sy_jobsite_relevance_jobsite_uniq ON shyrka.sy_jobsite_relevance USING btree (id_jobsite);
 
 
 --
--- Name: sy_chantier_relevance_job_idx; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_relevance_job_idx; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE INDEX sy_chantier_relevance_job_idx ON shyrka.sy_chantier_relevance USING btree (id_audit_job) WHERE (id_audit_job IS NOT NULL);
+CREATE INDEX sy_jobsite_relevance_job_idx ON shyrka.sy_jobsite_relevance USING btree (id_audit_job) WHERE (id_audit_job IS NOT NULL);
 
 
 --
@@ -5568,53 +5567,53 @@ CREATE UNIQUE INDEX uk_sy_agent_heartbeat_codename ON shyrka.sy_agent_heartbeat 
 
 
 --
--- Name: uq_chantier_active; Type: INDEX; Schema: shyrka; Owner: -
+-- Name: uq_jobsite_active; Type: INDEX; Schema: shyrka; Owner: -
 --
 
-CREATE UNIQUE INDEX uq_chantier_active ON shyrka.sy_chantier_claude_session USING btree (id_chantier) WHERE ((status)::text = 'active'::text);
-
-
---
--- Name: sy_chantier tr_chantier_archive_requires_kpi; Type: TRIGGER; Schema: shyrka; Owner: -
---
-
-CREATE TRIGGER tr_chantier_archive_requires_kpi BEFORE UPDATE OF archived_at ON shyrka.sy_chantier FOR EACH ROW EXECUTE FUNCTION shyrka.guard_chantier_archive_requires_kpi_reached();
-
+CREATE UNIQUE INDEX uq_jobsite_active ON shyrka.sy_jobsite_claude_session USING btree (id_jobsite) WHERE ((status)::text = 'active'::text);
 
 
 --
--- Name: sy_chantier tr_chantier_done_requires_outcome_proof; Type: TRIGGER; Schema: shyrka; Owner: -
+-- Name: sy_jobsite tr_jobsite_archive_requires_kpi; Type: TRIGGER; Schema: shyrka; Owner: -
 --
 
-CREATE TRIGGER tr_chantier_done_requires_outcome_proof BEFORE UPDATE OF status ON shyrka.sy_chantier FOR EACH ROW EXECUTE FUNCTION shyrka.guard_chantier_done_requires_outcome_proof();
+CREATE TRIGGER tr_jobsite_archive_requires_kpi BEFORE UPDATE OF archived_at ON shyrka.sy_jobsite FOR EACH ROW EXECUTE FUNCTION shyrka.guard_jobsite_archive_requires_kpi_reached();
 
-
---
--- Name: sy_chantier tr_chantier_done_requires_tasks_complete; Type: TRIGGER; Schema: shyrka; Owner: -
---
-
-CREATE TRIGGER tr_chantier_done_requires_tasks_complete BEFORE UPDATE ON shyrka.sy_chantier FOR EACH ROW EXECUTE FUNCTION shyrka.fn_chantier_done_requires_tasks_complete();
 
 
 --
--- Name: sy_chantier tr_chantier_guardrail_gate; Type: TRIGGER; Schema: shyrka; Owner: -
+-- Name: sy_jobsite tr_jobsite_done_requires_outcome_proof; Type: TRIGGER; Schema: shyrka; Owner: -
 --
 
-CREATE TRIGGER tr_chantier_guardrail_gate BEFORE UPDATE OF status ON shyrka.sy_chantier FOR EACH ROW EXECUTE FUNCTION shyrka.guard_chantier_done_requires_guardrail();
-
-
---
--- Name: sy_chantier tr_chantier_guardrail_gate_insert; Type: TRIGGER; Schema: shyrka; Owner: -
---
-
-CREATE TRIGGER tr_chantier_guardrail_gate_insert BEFORE INSERT ON shyrka.sy_chantier FOR EACH ROW EXECUTE FUNCTION shyrka.guard_chantier_done_requires_guardrail();
+CREATE TRIGGER tr_jobsite_done_requires_outcome_proof BEFORE UPDATE OF status ON shyrka.sy_jobsite FOR EACH ROW EXECUTE FUNCTION shyrka.guard_jobsite_done_requires_outcome_proof();
 
 
 --
--- Name: sy_cicatrices tr_cicatrices_guardrail_default; Type: TRIGGER; Schema: shyrka; Owner: -
+-- Name: sy_jobsite tr_jobsite_done_requires_tasks_complete; Type: TRIGGER; Schema: shyrka; Owner: -
 --
 
-CREATE TRIGGER tr_cicatrices_guardrail_default BEFORE INSERT ON shyrka.sy_cicatrices FOR EACH ROW EXECUTE FUNCTION shyrka.set_cicatrice_guardrail_default();
+CREATE TRIGGER tr_jobsite_done_requires_tasks_complete BEFORE UPDATE ON shyrka.sy_jobsite FOR EACH ROW EXECUTE FUNCTION shyrka.fn_jobsite_done_requires_tasks_complete();
+
+
+--
+-- Name: sy_jobsite tr_jobsite_guardrail_gate; Type: TRIGGER; Schema: shyrka; Owner: -
+--
+
+CREATE TRIGGER tr_jobsite_guardrail_gate BEFORE UPDATE OF status ON shyrka.sy_jobsite FOR EACH ROW EXECUTE FUNCTION shyrka.guard_jobsite_done_requires_guardrail();
+
+
+--
+-- Name: sy_jobsite tr_jobsite_guardrail_gate_insert; Type: TRIGGER; Schema: shyrka; Owner: -
+--
+
+CREATE TRIGGER tr_jobsite_guardrail_gate_insert BEFORE INSERT ON shyrka.sy_jobsite FOR EACH ROW EXECUTE FUNCTION shyrka.guard_jobsite_done_requires_guardrail();
+
+
+--
+-- Name: sy_scars tr_scars_guardrail_default; Type: TRIGGER; Schema: shyrka; Owner: -
+--
+
+CREATE TRIGGER tr_scars_guardrail_default BEFORE INSERT ON shyrka.sy_scars FOR EACH ROW EXECUTE FUNCTION shyrka.set_scar_guardrail_default();
 
 
 --
@@ -5625,66 +5624,66 @@ CREATE TRIGGER trg_sy_user_updated_at BEFORE UPDATE ON shyrka.sy_user FOR EACH R
 
 
 --
--- Name: sy_chantier_travail trg_travail_depends_on_readonly; Type: TRIGGER; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_work_order trg_work_order_depends_on_readonly; Type: TRIGGER; Schema: shyrka; Owner: -
 --
 
-CREATE TRIGGER trg_travail_depends_on_readonly BEFORE INSERT OR UPDATE ON shyrka.sy_chantier_travail FOR EACH ROW EXECUTE FUNCTION shyrka.fn_travail_depends_on_readonly();
-
-
---
--- Name: sy_cicatrices fk_cicatrices_id_chantier; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
---
-
-ALTER TABLE ONLY shyrka.sy_cicatrices
-    ADD CONSTRAINT fk_cicatrices_id_chantier FOREIGN KEY (id_chantier) REFERENCES shyrka.sy_chantier(id_chantier) ON DELETE SET NULL;
+CREATE TRIGGER trg_work_order_depends_on_readonly BEFORE INSERT OR UPDATE ON shyrka.sy_jobsite_work_order FOR EACH ROW EXECUTE FUNCTION shyrka.fn_work_order_depends_on_readonly();
 
 
 --
--- Name: sy_tache_dep fk_sy_tache_dep_blocked; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_scars fk_scars_id_jobsite; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_tache_dep
-    ADD CONSTRAINT fk_sy_tache_dep_blocked FOREIGN KEY (id_tache_blocked) REFERENCES shyrka.sy_chantier_tache(id_tache) ON DELETE CASCADE;
-
-
---
--- Name: sy_tache_dep fk_sy_tache_dep_blocker; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
---
-
-ALTER TABLE ONLY shyrka.sy_tache_dep
-    ADD CONSTRAINT fk_sy_tache_dep_blocker FOREIGN KEY (id_tache_blocker) REFERENCES shyrka.sy_chantier_tache(id_tache) ON DELETE CASCADE;
+ALTER TABLE ONLY shyrka.sy_scars
+    ADD CONSTRAINT fk_scars_id_jobsite FOREIGN KEY (id_jobsite) REFERENCES shyrka.sy_jobsite(id_jobsite) ON DELETE SET NULL;
 
 
 --
--- Name: sy_travail_dep fk_sy_travail_dep_blocked; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_task_dep fk_sy_task_dep_blocked; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_travail_dep
-    ADD CONSTRAINT fk_sy_travail_dep_blocked FOREIGN KEY (id_travail_blocked) REFERENCES shyrka.sy_chantier_travail(id_travail) ON DELETE CASCADE;
-
-
---
--- Name: sy_travail_dep fk_sy_travail_dep_blocker; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
---
-
-ALTER TABLE ONLY shyrka.sy_travail_dep
-    ADD CONSTRAINT fk_sy_travail_dep_blocker FOREIGN KEY (id_travail_blocker) REFERENCES shyrka.sy_chantier_travail(id_travail) ON DELETE CASCADE;
+ALTER TABLE ONLY shyrka.sy_task_dep
+    ADD CONSTRAINT fk_sy_task_dep_blocked FOREIGN KEY (id_task_blocked) REFERENCES shyrka.sy_jobsite_task(id_task) ON DELETE CASCADE;
 
 
 --
--- Name: sy_chantier_travail sy_chantier_travail_depends_on_travail_id_fkey; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_task_dep fk_sy_task_dep_blocker; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_chantier_travail
-    ADD CONSTRAINT sy_chantier_travail_depends_on_travail_id_fkey FOREIGN KEY (depends_on_travail_id) REFERENCES shyrka.sy_chantier_travail(id_travail) ON DELETE SET NULL;
+ALTER TABLE ONLY shyrka.sy_task_dep
+    ADD CONSTRAINT fk_sy_task_dep_blocker FOREIGN KEY (id_task_blocker) REFERENCES shyrka.sy_jobsite_task(id_task) ON DELETE CASCADE;
 
 
 --
--- Name: sy_chantier_travail sy_chantier_travail_resolves_travail_id_fkey; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_work_order_dep fk_sy_work_order_dep_blocked; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_chantier_travail
-    ADD CONSTRAINT sy_chantier_travail_resolves_travail_id_fkey FOREIGN KEY (resolves_travail_id) REFERENCES shyrka.sy_chantier_travail(id_travail) ON DELETE SET NULL;
+ALTER TABLE ONLY shyrka.sy_work_order_dep
+    ADD CONSTRAINT fk_sy_work_order_dep_blocked FOREIGN KEY (id_work_order_blocked) REFERENCES shyrka.sy_jobsite_work_order(id_work_order) ON DELETE CASCADE;
+
+
+--
+-- Name: sy_work_order_dep fk_sy_work_order_dep_blocker; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
+--
+
+ALTER TABLE ONLY shyrka.sy_work_order_dep
+    ADD CONSTRAINT fk_sy_work_order_dep_blocker FOREIGN KEY (id_work_order_blocker) REFERENCES shyrka.sy_jobsite_work_order(id_work_order) ON DELETE CASCADE;
+
+
+--
+-- Name: sy_jobsite_work_order sy_jobsite_work_order_depends_on_work_order_id_fkey; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
+--
+
+ALTER TABLE ONLY shyrka.sy_jobsite_work_order
+    ADD CONSTRAINT sy_jobsite_work_order_depends_on_work_order_id_fkey FOREIGN KEY (depends_on_work_order_id) REFERENCES shyrka.sy_jobsite_work_order(id_work_order) ON DELETE SET NULL;
+
+
+--
+-- Name: sy_jobsite_work_order sy_jobsite_work_order_resolves_work_order_id_fkey; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
+--
+
+ALTER TABLE ONLY shyrka.sy_jobsite_work_order
+    ADD CONSTRAINT sy_jobsite_work_order_resolves_work_order_id_fkey FOREIGN KEY (resolves_work_order_id) REFERENCES shyrka.sy_jobsite_work_order(id_work_order) ON DELETE SET NULL;
 
 
 --
@@ -5694,35 +5693,35 @@ ALTER TABLE ONLY shyrka.sy_chantier_travail
 
 
 --
--- Name: sy_chantier_claude_session sy_chantier_claude_session_id_chantier_fkey; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_claude_session sy_jobsite_claude_session_id_jobsite_fkey; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_chantier_claude_session
-    ADD CONSTRAINT sy_chantier_claude_session_id_chantier_fkey FOREIGN KEY (id_chantier) REFERENCES shyrka.sy_chantier(id_chantier) ON DELETE CASCADE;
-
-
---
--- Name: sy_chantier_lock sy_chantier_lock_id_chantier_fkey; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
---
-
-ALTER TABLE ONLY shyrka.sy_chantier_lock
-    ADD CONSTRAINT sy_chantier_lock_id_chantier_fkey FOREIGN KEY (id_chantier) REFERENCES shyrka.sy_chantier(id_chantier) ON DELETE CASCADE;
+ALTER TABLE ONLY shyrka.sy_jobsite_claude_session
+    ADD CONSTRAINT sy_jobsite_claude_session_id_jobsite_fkey FOREIGN KEY (id_jobsite) REFERENCES shyrka.sy_jobsite(id_jobsite) ON DELETE CASCADE;
 
 
 --
--- Name: sy_chantier_qa_run sy_chantier_qa_run_chantier_fk; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_lock sy_jobsite_lock_id_jobsite_fkey; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_chantier_qa_run
-    ADD CONSTRAINT sy_chantier_qa_run_chantier_fk FOREIGN KEY (id_chantier) REFERENCES shyrka.sy_chantier(id_chantier) ON DELETE CASCADE;
+ALTER TABLE ONLY shyrka.sy_jobsite_lock
+    ADD CONSTRAINT sy_jobsite_lock_id_jobsite_fkey FOREIGN KEY (id_jobsite) REFERENCES shyrka.sy_jobsite(id_jobsite) ON DELETE CASCADE;
 
 
 --
--- Name: sy_chantier_relevance sy_chantier_relevance_id_chantier_fkey; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
+-- Name: sy_jobsite_qa_run sy_jobsite_qa_run_jobsite_fk; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
 --
 
-ALTER TABLE ONLY shyrka.sy_chantier_relevance
-    ADD CONSTRAINT sy_chantier_relevance_id_chantier_fkey FOREIGN KEY (id_chantier) REFERENCES shyrka.sy_chantier(id_chantier) ON DELETE CASCADE;
+ALTER TABLE ONLY shyrka.sy_jobsite_qa_run
+    ADD CONSTRAINT sy_jobsite_qa_run_jobsite_fk FOREIGN KEY (id_jobsite) REFERENCES shyrka.sy_jobsite(id_jobsite) ON DELETE CASCADE;
+
+
+--
+-- Name: sy_jobsite_relevance sy_jobsite_relevance_id_jobsite_fkey; Type: FK CONSTRAINT; Schema: shyrka; Owner: -
+--
+
+ALTER TABLE ONLY shyrka.sy_jobsite_relevance
+    ADD CONSTRAINT sy_jobsite_relevance_id_jobsite_fkey FOREIGN KEY (id_jobsite) REFERENCES shyrka.sy_jobsite(id_jobsite) ON DELETE CASCADE;
 
 
 --

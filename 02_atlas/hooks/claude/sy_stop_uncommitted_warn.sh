@@ -3,7 +3,7 @@
 #
 # BLOQUANT : si la worktree git contient des changes non-committés à la fin
 # d'une session, refuse le Stop et force Claude à commiter. Applique la
-# doctrine  « Commit en flux » : aucun travail terminé ne reste
+# doctrine  « Commit en flux » : aucun work_order terminé ne reste
 # uncommitted.
 #
 # Session-aware (depuis 2026-05-21) : si la session a un fichier de tracking
@@ -32,7 +32,7 @@ cd ${SYNEDRE_ROOT} 2>/dev/null || exit 0
 # atlas-spawn-claude.mjs, commit Brunel #421), on sort silencieusement.
 # Le worker gère lui-même le cycle commit en fin de run — le sous-claude ne
 # doit pas commiter (doctrine commit-en-flux réservée aux sessions utilisateur).
-# Cicatrice 2026-05-23 #3 (chantier #94) : sans ce guard, 100+ events hook_*
+# Scar 2026-05-23 #3 (jobsite #94) : sans ce guard, 100+ events hook_*
 # identiques bloquaient le sous-claude sans rien produire.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/is-worker-context.sh
@@ -69,8 +69,8 @@ fi
 # Filtre session-aware : si fichier de tracking existe, ne garder que les
 # fichiers édités PAR CETTE SESSION (les autres = WIP d'une session sœur).
 #
-# Cas zéro-édition (cicatrice 2026-05-27) : une session trackée qui n'a fait
-# AUCUN Edit/Write (travail 100% DB / lecture) n'a pas de log d'édition. Sans
+# Cas zéro-édition (scar 2026-05-27) : une session trackée qui n'a fait
+# AUCUN Edit/Write (work_order 100% DB / lecture) n'a pas de log d'édition. Sans
 # guard, le test `[ -f "$edited_log" ]` était faux, le filtre shunté, et la
 # session héritait du dirty GLOBAL (WIP des sessions sœurs partageant la même
 # worktree) → faux blocage. Pas de log = zéro fichier à elle → on sort.
@@ -125,6 +125,6 @@ fi
 
 # 1ère passe : BLOQUE le Stop et instruit Claude de commiter
 cat <<EOF
-{"decision": "block", "reason": "Doctrine  « Commit en flux » : travail non-committé interdit en fin de session.\n\nFichiers dirty (de cette session) :\n${inner}\n\nAction requise : commiter (1 chantier = 1 commit cohérent) PUIS rendre la main. Si la worktree contient du WIP volontaire, le déclarer explicitement dans la réponse avant Stop."}
+{"decision": "block", "reason": "Doctrine  « Commit en flux » : work_order non-committé interdit en fin de session.\n\nFichiers dirty (de cette session) :\n${inner}\n\nAction requise : commiter (1 jobsite = 1 commit cohérent) PUIS rendre la main. Si la worktree contient du WIP volontaire, le déclarer explicitement dans la réponse avant Stop."}
 EOF
 exit 0

@@ -2,11 +2,11 @@
 #
 # hook-cron-llm-block.sh — Hook PreToolUse Bash BLOQUANT (LLM en cron = drain forfait).
 #
-# Matérialise la doctrine  (chantier #506,
+# Matérialise la doctrine  (jobsite #506,
 # session anti-drain du 2026-07-19). Un script qui consomme du LLM (claude -p /
 # sy_ai_provider.complete / invoke_agent / spawn node-pty) enregistré en crontab
 # draine le forfait Claude EN SILENCE : le coût est invisible jusqu'au plafond
-# hebdomadaire. Le déclencheur du 2026-07-19 : sy_chantier_readiness_audit --enrich
+# hebdomadaire. Le déclencheur du 2026-07-19 : sy_jobsite_readiness_audit --enrich
 # balayait TOUT le backlog toutes les 20 min via claude -p. Retiré et passé en
 # on-demand (--only) le jour même — ce hook empêche la RÉINTRODUCTION.
 #
@@ -103,13 +103,13 @@ ${WHICH}
 
   POURQUOI C'EST BLOQUÉ : un LLM récurrent en crontab draine le forfait Claude
   EN SILENCE — le coût n'apparaît nulle part avant le plafond hebdomadaire. Le
-  2026-07-19, sy_chantier_readiness_audit --enrich balayait TOUT le backlog via
+  2026-07-19, sy_jobsite_readiness_audit --enrich balayait TOUT le backlog via
   claude -p toutes les 20 min. La règle depuis : le LLM interne s'appelle À LA
   DEMANDE (au moment d'en avoir besoin), jamais sur une horloge.
 
   CE QU'IL FAUT FAIRE :
     • Rends l'appel LLM ON-DEMAND (ex : readiness_audit --only <codename> lancé
-      au moment où on veut armer un chantier, pas en cron).
+      au moment où on veut armer un jobsite, pas en cron).
     • OU garde en cron la partie DÉTERMINISTE seulement (verdict/scan sans LLM).
 
   SI C'EST VRAIMENT UN CHOIX CONSCIENT (ex worker event-driven qui no-op quand

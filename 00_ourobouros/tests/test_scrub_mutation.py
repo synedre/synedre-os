@@ -117,6 +117,16 @@ MUTANTS = [
     # / version metadata are stripped. The nonce is an ephemeral token that must
     # never ship. A codename (acme) + schema token ride along so the gate still
     # detects the RAW dump — the gate knows nothing of '\restrict'.
+    # lexicon — FR building-trade vocabulary -> EN (decided 2026-07-24). The FR
+    # words are the PUBLIC rename contract (documented in the release README),
+    # not a codename/path/schema — naming them here does not violate the
+    # fictional-literals invariant above.
+    ("lexicon_vocab",
+     'table = sy_chantier_travail\n'
+     '# audit des taches du chantier : cicatrice liee, conduite_slug, travaux\n',
+     ["chantier", "travail", "travaux", "tache", "cicatrice", "conduite"],
+     ["sy_jobsite_work_order", "tasks", "jobsite", "scar", "playbook_slug",
+      "work_orders"]),
     ("pg_dump_artifacts",
      '--\n-- PostgreSQL database dump\n--\n'
      '\\restrict testnonceforpgdumpnotreal\n'
@@ -160,6 +170,106 @@ def test_aggregate_scrub_then_gate_clean():
     clean = _scrub(blob)
     findings = _gate(clean)
     assert not findings, "aggregate leaked after scrub:\n" + report(findings)
+
+
+# === LEXICON: boundaries + curated overlays ==================================
+def test_lexicon_boundaries_no_false_positive():
+    """Mid-word hits must NOT fire: plain-language words containing a lexicon
+    token ('moustache', 'detache', 'travailler') and accent-adjacent forms
+    ('détache') stay intact. Not a MUTANTS entry: this text contains no leak,
+    so the raw-gate layer would (rightly) find nothing."""
+    text = "la moustache se detache, il faut travailler, on détache tout\n"
+    assert sy_scrub.translate_lexicon(text) == text
+    assert not [f for f in _gate(text) if f.category == "lexicon"]
+
+
+def test_lexicon_case_variants():
+    out = sy_scrub.translate_lexicon("Chantier: CHANTIER du chantier\n")
+    assert "hantier" not in out
+    assert "Jobsite" in out and "JOBSITE" in out and "jobsite" in out
+
+
+_NEUTRAL_COMMENT_MAP = {
+    "tables": {"sy_widget": "A widget's registry."},
+    "columns": {"sy_widget.position": "Order in the widget list."},
+    "constraints": {"chk_widget_safe": "Guards the widget pattern."},
+    "indexes": {"sy_widget_ix": "Speeds up widget lookups."},
+}
+
+
+def test_comment_overlay_replaces_known_and_escapes():
+    """A mapped comment is swapped for its curated EN text; an apostrophe in
+    the EN text is SQL-escaped by DOUBLING, never a backslash (PostgreSQL
+    standard_conforming_strings — the antislash scar)."""
+    sql = "COMMENT ON TABLE shyrka.sy_widget IS 'ancien texte français';\n"
+    out = sy_scrub.translate_db_comments(sql, _NEUTRAL_COMMENT_MAP)
+    assert out == "COMMENT ON TABLE shyrka.sy_widget IS 'A widget''s registry.';\n"
+    assert "\\'" not in out
+
+
+def test_comment_overlay_drops_unknown_fail_closed():
+    """MUTATION PROOF of fail-closed: a comment ABSENT from the overlay is
+    dropped entirely — unreviewed prose never ships, in any language."""
+    sql = (
+        "COMMENT ON TABLE shyrka.sy_widget IS 'known';\n"
+        "COMMENT ON TABLE shyrka.sy_rogue IS 'texte non relu qui fuirait';\n"
+    )
+    out = sy_scrub.translate_db_comments(sql, _NEUTRAL_COMMENT_MAP)
+    assert "sy_rogue" not in out and "non relu" not in out
+    assert "sy_widget" in out
+
+
+def test_comment_overlay_quoted_column_constraint_index():
+    """The three non-plain shapes: a quoted column name ('\"position\"' is a
+    reserved word), CONSTRAINT ... ON, and INDEX."""
+    sql = (
+        'COMMENT ON COLUMN shyrka.sy_widget."position" IS \'ordre fr\';\n'
+        "COMMENT ON CONSTRAINT chk_widget_safe ON shyrka.sy_widget IS 'fr';\n"
+        "COMMENT ON INDEX shyrka.sy_widget_ix IS 'fr';\n"
+    )
+    out = sy_scrub.translate_db_comments(sql, _NEUTRAL_COMMENT_MAP)
+    assert "Order in the widget list." in out
+    assert "Guards the widget pattern." in out
+    assert "Speeds up widget lookups." in out
+    assert "fr" not in out.replace("from", "")  # no FR body survived
+
+
+def test_comment_overlay_noop_without_map():
+    """comment_map=None is the facade path: COMMENT ON untouched."""
+    sql = "COMMENT ON TABLE shyrka.sy_widget IS 'x';\n"
+    assert sy_scrub.translate_db_comments(sql, None) == sql
+
+
+# French markers that must never survive the curated SQL-message pass — verbs
+# and tracker refs sampled from every mapped message.
+_FR_MESSAGE_MARKERS = [
+    "refuse", "terminees", "lecture seule", "Utiliser", "dépendances",
+    "archiver", "atteint", "clôture", "garde-fou", "justifie", "clore",
+    "renseigne", "naître", "catégorique", "bloque", "rattachées", "sûr",
+    "#974", "#380", "#397", "#984", "#987", "#989",
+]
+
+
+def test_sql_messages_full_chain_no_french():
+    """Every curated FR engine-function string, run through the FULL scrub
+    chain, leaves no French marker, no tracker ref, and no lexicon residue.
+    Proves both the map itself and its ordering before the lexicon pass."""
+    for fr, _en in sy_scrub._DEFAULT_SQL_MESSAGES:
+        out = _scrub(fr)
+        for marker in _FR_MESSAGE_MARKERS:
+            assert marker not in out, f"marker {marker!r} survived in:\n{out}"
+        assert not [f for f in _gate(out) if f.category == "lexicon"], out
+
+
+def test_bootstrap_and_schema_doc_lexicon_clean(repo_root):
+    """The committed artifacts themselves: bootstrap.sql and the generated
+    db-schema.md carry zero FR-lexicon residue."""
+    from sy_leak_gate import _LEXICON_RE
+
+    for rel in ("core/shyrka/bootstrap.sql", "documentation/db-schema.md"):
+        text = (repo_root / rel).read_text(encoding="utf-8")
+        hits = sorted({m.group(0) for m in _LEXICON_RE.finditer(text)})
+        assert not hits, f"{rel}: FR lexicon residue {hits}"
 
 
 # === SECRETS: never scrubbed; gate must flag + mask ==========================

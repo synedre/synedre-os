@@ -6,7 +6,7 @@
 # (standard_conforming_strings = on, vérifié), l'antislash dans un littéral est DÉJÀ
 # littéral — `'a\b'` vaut a\b. Le doubler AJOUTE un antislash au lieu d'en protéger un.
 #
-# CICATRICE (chantier #466, 2026-07-17) : `synedre/sy_entities/base.py:_esc` faisait
+# SCAR (jobsite #466, 2026-07-17) : `synedre/sy_entities/base.py:_esc` faisait
 # `.replace("\\", "\\\\")` — un réflexe MariaDB (où l'antislash EST un échappement),
 # hérité d'avant le drop de MariaDB le 2026-04-30. Résultat : TOUTES les écritures
 # d'entités corrompaient silencieusement les valeurs contenant un antislash. Aller-retour
@@ -77,7 +77,7 @@ BLOQUÉ — doublement d'antislash dans un échappement SQL ($FILE)
   C'est un réflexe MariaDB (où l'antislash EST un caractère d'échappement).
   MariaDB a été droppé le 2026-04-30. Ce même réflexe a corrompu 30 champs en
   base pendant des mois, sans un bruit : les colonnes sont TEXT, PG ne valide
-  rien, et personne ne relisait (chantier #466).
+  rien, et personne ne relisait (jobsite #466).
 
   À faire — n'échapper QUE l'apostrophe :
     s = str(value).replace("'", "''")

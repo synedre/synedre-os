@@ -3,7 +3,7 @@
 #        handoff vers une table sy_session_handoff.
 """sy_session_split.py — Hook Stop : fractionnement de session à seuil de contexte.
 
-Chantier #508 (routage-coût) — coupe le coût quadratique des sessions longues
+Jobsite #508 (routage-coût) — coupe le coût quadratique des sessions longues
 (historique + tool results renvoyés à chaque tour). Déclenché à chaque Stop :
   1. mesure le contexte RÉEL (message.usage du dernier assistant =
      input + cache_read + cache_creation) et le nombre de tours ;
@@ -110,8 +110,15 @@ def _measure(transcript_path: str) -> tuple[int, int, int, int]:
 
 # ─── Effets : handoff persistant + log JSONL ───────────────────────────────────
 
-def _write_handoff(session_id: str, turns: int, ctx: int) -> Path | None:
-    """Crée un handoff stub versionné (jamais d'écrasement). L'agent le remplit."""
+def _write_handoff(session_id: str, turns: int, ctx: int, cwd: str = "") -> Path | None:
+    """Crée un handoff stub versionné (jamais d'écrasement). L'agent le remplit.
+
+    ``cwd`` est inscrit en entête et fait foi pour le SCOPE de reprise : tous les
+    worktrees partagent ce dossier de handoffs (les hooks pointent en absolu vers
+    ${SYNEDRE_ROOT}/synedre/), donc sans cette ligne un handoff de
+    `wt/jobsite-X` remonterait dans une session ouverte ailleurs.
+    Lu par sy_session_handoff_resume._cwd_of() — ne pas changer le format seul.
+    """
     try:
         HANDOFF_DIR.mkdir(parents=True, exist_ok=True)
         sid_safe = (session_id or "nosession").replace("/", "_").replace("\\", "_")
@@ -120,7 +127,8 @@ def _write_handoff(session_id: str, turns: int, ctx: int) -> Path | None:
             f"# Handoff de session — fractionnement (contexte ~{ctx // 1000}k, "
             f"{turns} tours)\n\n"
             f"> Session `{session_id}` — {_now_iso()}\n"
-            f"> Détecté par `sy_session_split.py` (chantier #508). Le contexte a "
+            f"> Répertoire de work_order : `{cwd or os.getcwd()}`\n"
+            f"> Détecté par `sy_session_split.py` (jobsite #508). Le contexte a "
             f"franchi le seuil de fractionnement : coût quadratique.\n"
             f"> **Remplis les 4 sections ci-dessous** puis fractionne la session "
             f"(/clear en interactif ; la compaction native reset en autonome).\n\n"
@@ -166,6 +174,7 @@ def _decide(
     ctx: int,
     inp: int,
     cache_read: int,
+    cwd: str = "",
 ) -> tuple[int, dict | None]:
     """Retourne (exit_code, output_json | None). Effectue les effets de bord."""
     seuil_franchi = ctx >= SEUIL_HAUT or turns >= SEUIL_TOUR
@@ -184,7 +193,7 @@ def _decide(
             # Déjà notifié pour ce franchissement — attendre la compaction native
             return 0, None
         # Passe 1 — 1er franchissement : block + handoff persistant
-        handoff = _write_handoff(session_id, turns, ctx)
+        handoff = _write_handoff(session_id, turns, ctx, cwd)
         try:
             MARKER_DIR.mkdir(parents=True, exist_ok=True)
             armed.touch()
@@ -251,6 +260,7 @@ def _run() -> int:
     exit_code, output = _decide(
         stop_active=stop_active, session_id=session_id,
         turns=turns, ctx=ctx, inp=inp, cache_read=cache_read,
+        cwd=payload.get("cwd", "") or "",
     )
     if output is not None:
         sys.stdout.write(json.dumps(output, ensure_ascii=False))

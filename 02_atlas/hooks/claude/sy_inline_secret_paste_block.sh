@@ -3,7 +3,7 @@
 # hook-inline-secret-paste-block.sh — Hook PreToolUse Bash BLOQUANT (anti-leak inline).
 #
 # Matérialise la doctrine anti-leak secrets ( §"Anti-leak secrets" +
-# doctrine des secrets 3 niveaux). Comble une CLASSE de cicatrices récurrente
+# doctrine des secrets 3 niveaux). Comble une CLASSE de scars récurrente
 # (#890 #827 #821 #774 #739 #735 #721, 7 occurrences P0/P1) : un agent bloqué
 # par un environnement non sourcé (`PG_HOST inaccessible`, `.env pas chargé`)
 # contourne en collant la VALEUR du secret directement dans la commande. Rapide
@@ -25,7 +25,7 @@
 # certain.
 #
 # Périmètre v1 + LIMITES CONNUES (revue Mitnick 2026-07-13, verdict clean-with-notes) :
-#   - Sources : .env + .env.host (origine des 7 cicatrices). Les .env tenant
+#   - Sources : .env + .env.host (origine des 7 scars). Les .env tenant
 #     (codemyshop/tenants/<x>/.env, ~4 actifs : Stripe webhook…) NE sont PAS
 #     couverts en v1 — extension future si récurrence.
 #   - Gating par NOM sensible : une valeur sensible portée par une variable au
@@ -63,7 +63,7 @@ for ENV_FILE in "$REPO/.env" "$REPO/.env.host"; do
     # IFS='=' → tout ce qui suit le premier '=' va dans val (valeurs avec '=' OK).
     # `|| [ -n "$name" ]` : SANS ça, la DERNIÈRE ligne d'un fichier sans saut de
     # ligne final n'est jamais traitée — `read` renvoie faux et `while` sort avant
-    # d'exécuter le corps. Trouvé le 2026-07-17 (chantier #448) : .env fait 257
+    # d'exécuter le corps. Trouvé le 2026-07-17 (jobsite #448) : .env fait 257
     # lignes dont la 257e, sans newline final, portait FACEBOOK_PASSWD — jamais
     # protégé. Un secret ajouté en fin de fichier (le geste le plus naturel qui
     # soit) échappait donc au radar en silence.
@@ -80,14 +80,14 @@ for ENV_FILE in "$REPO/.env" "$REPO/.env.host"; do
         # MISTRAL_API_LOGIN vaut l'email d'Alex, que  documente lui-même
         # en clair comme boîte canonique. Résultat : toute phrase citant son
         # adresse était bloquée. Un secret qui ne peut pas être un secret n'a rien
-        # à faire dans le radar (faux positif constaté 2026-07-17, chantier #448).
+        # à faire dans le radar (faux positif constaté 2026-07-17, jobsite #448).
         # `_ID` N'EST PAS exclu à dessein : AWS_ACCESS_KEY_ID reste armé (prudence
         # sur les clés AWS — un FP y est rare, un trou serait cher).
         if printf '%s' "$name" | grep -qiE '(_LOGIN|_USER|_USERNAME|_EMAIL|_FROM|_HOST|_PORT)$'; then
             continue
         fi
         # Normalise la valeur COMME LE SHELL LA VOIT, pas comme le texte l'écrit.
-        # Trou pré-existant trouvé le 2026-07-17 (chantier #448) : 14 lignes de
+        # Trou pré-existant trouvé le 2026-07-17 (jobsite #448) : 14 lignes de
         # .env/.env.host finissent par un ';' (SMTP_PASS, IMAP_PASSWORD,
         # N26_PASSWORD, <TENANT>_OVH_PASSWORD, <TENANT>_PASSWD, FACEBOOK_PASSWD…).
         # Le shell traite ce ';' comme un séparateur de commande et ne le met
@@ -123,7 +123,7 @@ BLOQUÉ — valeur de secret collée inline (variable : $MATCH_VAR)
   La VALEUR d'un secret apparaît littéralement dans ta commande. Contourner un
   environnement non sourcé en collant la valeur est INTERDIT : elle fuite dans
   le transcript, les logs et l'historique, et casse la rotation des secrets
-  (cicatrices #890 #827 #821 #774 #739 #735 #721).
+  (scars #890 #827 #821 #774 #739 #735 #721).
 
   Ce que tu dois faire — sourcer l'env, puis référencer la VARIABLE :
     set -a && . $REPO/.env && . $REPO/.env.host && set +a

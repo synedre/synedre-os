@@ -87,7 +87,10 @@ def audit_history(root: Path, denylist: list[str]) -> list:
         if ln[:1] in "+-" and ln[:3] not in ("+++", "---")
     )
     findings = []
-    for f in scan_text(content, denylist):
+    # lexicon_check off: the FR->EN vocabulary rename lives in history by
+    # construction (the commits that performed it). The WORKING TREE must be
+    # lexicon-clean — that is the tree scan's job, not history's.
+    for f in scan_text(content, denylist, lexicon_check=False):
         f.path = f"(git log content) {f.path or ':'}"
         findings.append(f)
     return findings

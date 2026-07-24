@@ -68,7 +68,7 @@ echo "🔗 Activating skills..."
 ln -sf $(pwd)/03_sun_wukong/skills .claude/skills
 
 # For Kimi Code (example)
-ln -sf $(pwd)/03_sun_wukong/skills/system_chantier.md .kimirules
+ln -sf $(pwd)/03_sun_wukong/skills/system_jobsite.md .kimirules
 
 
 

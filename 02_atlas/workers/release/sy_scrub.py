@@ -6,7 +6,7 @@ Pure functions, idempotent. This is the "scrub" stage of the release pipeline:
 
     sy_extract  ->  sy_scrub  ->  stage  ->  sy_leak_gate  ->  sy_publish_audit
 
-Doctrine (cicatrice #618 / ADR-0001): scrub the SOURCE, then write — never scrub
+Doctrine (scar #618 / ADR-0001): scrub the SOURCE, then write — never scrub
 the output. The writer (sy_extract) reads publish-whitelist.txt, scrubs each
 listed file with scrub_text(), and writes the dest. A leak gate then checks the
 staged output regardless, and publishing is never autonomous.
@@ -29,6 +29,19 @@ Transforms (order matters — see scrub_text):
   7. strip pg_dump artifacts    (banner / \\restrict nonce / version lines /
      SET block / set_config) — pg_dump 16 boilerplate; the \\restrict nonce is
      an ephemeral token that must never ship. Line-anchored, no-op on prose.
+  8. translate SQL messages     (curated exact-string map: the FR RAISE
+     EXCEPTION texts and in-function comments of the engine functions -> EN).
+     Runs BEFORE the lexicon pass so the FR keys still match; identifiers
+     inside the EN values are then renamed by the lexicon pass.
+  9. translate lexicon          (FR building-trade vocabulary -> EN, decided
+     2026-07-24: chantier->jobsite, travail->work_order, tache->task,
+     cicatrice->scar, conduite->playbook; agent stays agent). Word-level,
+     longest-first, snake_case-aware boundaries (underscore is a boundary,
+     accented letters are not — 'detache' / 'moustache' stay intact).
+ 10. translate DB comments      (curated overlay comments-en.json). FAIL-CLOSED:
+     when a map is provided, every COMMENT ON is either replaced by its curated
+     EN text or DROPPED — unreviewed FR prose never ships. map=None = no-op
+     (the facade path; facades carry no COMMENT ON).
 
 Scope: structure, not secrets. Secrets are NOT scrubbed here — they must FAIL at
 the gate and demand human action, never be silently redacted into a publish.
@@ -243,11 +256,176 @@ def strip_pg_dump_artifacts(text: str) -> str:
     return text
 
 
+# ---- 7. SQL messages (curated FR -> EN, exact-string) ------------------------
+# The engine functions were authored in French in the monolith. Their RAISE
+# EXCEPTION texts and in-function comments are prose a regex cannot translate,
+# so each known FR string maps to a curated EN replacement. Keys must match the
+# dumped text EXACTLY (including the SQL '' quote doubling); identifiers left
+# as-is in the EN values are renamed right after by translate_lexicon, which is
+# why this pass runs BEFORE it. Carrying the FR originals here is the same
+# residual-vocabulary situation as _DEFAULT_SCHEMA_TOKENS (release/ is
+# gate-excluded by construction).
+_DEFAULT_SQL_MESSAGES = (
+    ("'chantier % : passage done refuse — il reste des taches non terminees "
+     "(ni done ni cancelled). Termine ou annule-les d''abord.'",
+     "'chantier %: cannot transition to done — open tasks remain (neither done "
+     "nor cancelled). Finish or cancel them first.'"),
+    ("'depends_on_travail_id est en lecture seule (DEPRECATED tache #974). '",
+     "'depends_on_travail_id is read-only (DEPRECATED). '"),
+    ("'Utiliser sy_travail_dep pour les dépendances N:M. '",
+     "'Use sy_travail_dep for N:M dependencies. '"),
+    ("'outcome-kpi-gate: chantier % (id=%) porte un outcome_kpi non atteint "
+     "(outcome_reached_at NULL) — ne peut pas s''archiver tant que le KPI "
+     "n''est pas confirmé atteint (chantier #397, cicatrice #989 "
+     "chantier-propriétaire-à-KPI). KPI = %'",
+     "'outcome-kpi-gate: chantier % (id=%) carries an unreached outcome_kpi "
+     "(outcome_reached_at NULL) — cannot archive until the KPI is confirmed "
+     "reached. KPI = %'"),
+    ("'guardrail-gate: un chantier ne peut pas être INSERTé directement en "
+     "status=% (codename=%) — il doit TRANSITER (planning→...→done) pour "
+     "passer par le gate de clôture (chantier #380 scar-to-guardrail-engine, "
+     "correctif #984)'",
+     "'guardrail-gate: a chantier cannot be INSERTed directly with status=% "
+     "(codename=%) — it must TRANSITION (planning→...→done) through the "
+     "closing gate'"),
+    ("'guardrail-gate: chantier % (id=%) a % cicatrice(s) P0/P1 "
+     "guardrail_status=todo — pose le garde-fou (check_added + "
+     "guardrail_status=enforced) OU justifie vigilance avant de clore "
+     "(chantier #380 scar-to-guardrail-engine)'",
+     "'guardrail-gate: chantier % (id=%) has % P0/P1 cicatrice(s) with "
+     "guardrail_status=todo — add the guardrail (check_added + "
+     "guardrail_status=enforced) OR justify vigilance before closing'"),
+    ("'outcome-proof-gate: chantier % (id=%) a requires_outcome_proof=true "
+     "mais outcome_evidence vide — renseigne une preuve (run e2e vert ou KPI "
+     "mesuré) avant de clore (chantier #397, cicatrice #987 "
+     "done-requires-proof)'",
+     "'outcome-proof-gate: chantier % (id=%) has requires_outcome_proof=true "
+     "but outcome_evidence is empty — provide proof (a green e2e run or a "
+     "measured KPI) before closing'"),
+    ("  -- Cas INSERT : un chantier ne peut jamais naître déjà clos. Pas d'OLD\n"
+     "  -- disponible (TG_OP='INSERT') — check catégorique sur NEW uniquement.",
+     "  -- INSERT case: a chantier can never be born already closed. No OLD row\n"
+     "  -- available (TG_OP='INSERT') — categorical check on NEW only."),
+    ("  -- Cas UPDATE (logique existante, inchangée) : transition vers 'done' —\n"
+     "  -- bloque si des cicatrices P0/P1 rattachées restent guardrail_status='todo'.",
+     "  -- UPDATE case: transition to 'done' — blocks while attached P0/P1\n"
+     "  -- cicatrices still sit at guardrail_status='todo'."),
+    ("    -- NULL / vide = sûr. Sinon : refuse un groupe contenant un quantificateur\n"
+     "    -- (…[*+]…) immédiatement suivi d'un quantificateur — ReDoS classique (a+)+ (.*)* …",
+     "    -- NULL / empty = safe. Otherwise: reject a group containing a quantifier\n"
+     "    -- (…[*+]…) immediately followed by a quantifier — classic ReDoS: (a+)+ (.*)* …"),
+)
+
+
+def translate_sql_messages(text: str, messages=None) -> str:
+    """Replace the known FR strings of the engine functions with curated EN.
+
+    Exact-string (str.replace), never regex: the keys carry SQL quote doubling
+    and multi-line comment blocks that must match byte-for-byte. Unknown FR
+    prose is NOT handled here — the lexicon pass and the gate's lexicon check
+    are the backstop for anything this curated map does not know."""
+    for fr, en in (messages if messages is not None else _DEFAULT_SQL_MESSAGES):
+        text = text.replace(fr, en)
+    return text
+
+
+# ---- 8. lexicon (FR building-trade vocabulary -> EN) -------------------------
+# Wording decided by Alex 2026-07-24 (sy_lexicon entry_scope='oss-distro'): the
+# building-site semantics survive translation — chantier->jobsite,
+# travail->work_order, tache->task, cicatrice->scar, conduite->playbook; agent
+# stays agent. Word-level with snake_case-aware boundaries: an underscore IS a
+# boundary (sy_chantier_travail must match) but letters — including accented
+# ones — are NOT ('detache', 'moustache', 'travailler' stay intact).
+_DEFAULT_LEXICON = (
+    ("chantiers", "jobsites"), ("chantier", "jobsite"),
+    ("travaux", "work_orders"), ("travail", "work_order"),
+    ("tâches", "tasks"), ("tâche", "task"),
+    ("taches", "tasks"), ("tache", "task"),
+    ("cicatrices", "scars"), ("cicatrice", "scar"),
+    ("conduites", "playbooks"), ("conduite", "playbook"),
+)
+# Boundary class: ASCII alnum + Latin-1 letters. Underscore excluded on purpose.
+_LEX_B = "A-Za-zÀ-ÿ0-9"
+
+
+def translate_lexicon(text: str, lexicon=None) -> str:
+    """Translate the FR orchestration vocabulary into the EN building-trade
+    lexicon, longest-first (plural before singular), in three case variants
+    (lower / Capitalized / UPPER). Identifiers and prose alike: mid-word hits
+    are excluded by the boundary class, and any FR residue this pass cannot
+    know is caught by the gate's lexicon check (defense in depth)."""
+    pairs = lexicon if lexicon is not None else _DEFAULT_LEXICON
+    for fr, en in sorted(pairs, key=lambda p: len(p[0]), reverse=True):
+        for f, e in ((fr, en), (fr.capitalize(), en.capitalize()), (fr.upper(), en.upper())):
+            text = re.sub(
+                rf"(?<![{_LEX_B}]){re.escape(f)}(?![{_LEX_B}])", e, text,
+            )
+    return text
+
+
+# ---- 9. DB comments (curated EN overlay, fail-closed) ------------------------
+# COMMENT ON statements are French prose dumped from the private DB. A curated
+# overlay (comments-en.json: {"tables": {name: en}, "columns": {"t.c": en},
+# "constraints": {name: en}, "indexes": {name: en}} — keys use the POST-lexicon
+# names) replaces each one; a comment absent from the overlay is DROPPED, never
+# shipped untranslated. Runs LAST so the identifiers in the statement are
+# already renamed when the key is derived.
+_COMMENT_STMT_RE = re.compile(
+    r"COMMENT ON (TABLE|COLUMN|CONSTRAINT|INDEX)[ \t]+"
+    r"(\S+(?:[ \t]+ON[ \t]+\S+)?)[ \t]+IS[ \t]+'((?:[^']|'')*)';\n?"
+)
+
+
+def load_comment_map(path: Path | str) -> dict:
+    """Read the curated EN comment overlay (JSON)."""
+    import json
+
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def translate_db_comments(text: str, comment_map: dict | None = None) -> str:
+    """Replace every COMMENT ON with its curated EN text, or DROP it.
+
+    Fail-closed by construction: with a map provided, no original comment body
+    ever survives — it is either swapped for reviewed EN prose or removed. With
+    comment_map=None the pass is a no-op (the facade path: .py/.sh facades
+    carry no COMMENT ON). EN apostrophes are SQL-escaped by doubling — never a
+    backslash (PostgreSQL standard_conforming_strings)."""
+    if comment_map is None:
+        return text
+
+    def _key(kind: str, target: str):
+        name = target.split(".")[-1].strip('"')
+        if kind == "TABLE":
+            return comment_map.get("tables", {}).get(name)
+        if kind == "COLUMN":
+            parts = target.split(".")
+            tbl = parts[-2] if len(parts) >= 2 else ""
+            return comment_map.get("columns", {}).get(f"{tbl}.{name}")
+        if kind == "CONSTRAINT":
+            cname = target.split()[0]
+            return comment_map.get("constraints", {}).get(cname)
+        return comment_map.get("indexes", {}).get(name)
+
+    def _repl(m: re.Match) -> str:
+        en = _key(m.group(1), m.group(2))
+        if en is None:
+            return ""  # fail-closed: unreviewed prose never ships
+        return f"COMMENT ON {m.group(1)} {m.group(2)} IS '{en.replace(chr(39), chr(39) * 2)}';\n"
+
+    return _COMMENT_STMT_RE.sub(_repl, text)
+
+
 # ---- orchestration ----------------------------------------------------------
-def scrub_text(text, denylist=None, *, path_map=None, schema_tokens=None) -> str:
-    """Apply all transforms in order. denylist=None skips codenames. path_map /
-    schema_tokens override the monolith defaults (neutral test fixtures pass
-    their own so the test stays token-free in the public repo)."""
+def scrub_text(
+    text, denylist=None, *, path_map=None, schema_tokens=None,
+    sql_messages=None, lexicon=None, comment_map=None,
+) -> str:
+    """Apply all transforms in order. denylist=None skips codenames;
+    comment_map=None skips the COMMENT overlay (facade path). path_map /
+    schema_tokens / sql_messages / lexicon override the monolith defaults
+    (neutral test fixtures pass their own so the test stays token-free in the
+    public repo)."""
     text = strip_proprietary_headers(text)
     text = strip_private_refs(text)
     if denylist:
@@ -256,17 +434,26 @@ def scrub_text(text, denylist=None, *, path_map=None, schema_tokens=None) -> str
     text = scrub_schema_namespace(text, schema_tokens)
     text = rename_prefixes(text)
     text = strip_pg_dump_artifacts(text)
+    text = translate_sql_messages(text, sql_messages)
+    text = translate_lexicon(text, lexicon)
+    text = translate_db_comments(text, comment_map)
     return text
 
 
 # ---- CLI (manual single-file check) ----------------------------------------
 def main() -> None:
-    if len(sys.argv) < 2:
-        print("usage: sy_scrub.py <source-file> [denylist.txt]", file=sys.stderr)
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    comments = None
+    for a in sys.argv[1:]:
+        if a.startswith("--comments="):
+            comments = load_comment_map(a.split("=", 1)[1])
+    if not args:
+        print("usage: sy_scrub.py <source-file> [denylist.txt] [--comments=map.json]",
+              file=sys.stderr)
         sys.exit(2)
-    src = Path(sys.argv[1]).read_text(encoding="utf-8")
-    deny = load_denylist(sys.argv[2]) if len(sys.argv) > 2 else None
-    sys.stdout.write(scrub_text(src, deny))
+    src = Path(args[0]).read_text(encoding="utf-8")
+    deny = load_denylist(args[1]) if len(args) > 1 else None
+    sys.stdout.write(scrub_text(src, deny, comment_map=comments))
 
 
 if __name__ == "__main__":

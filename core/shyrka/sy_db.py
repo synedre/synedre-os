@@ -1,7 +1,7 @@
 """
 synedre/db.py — Helper connexion PostgreSQL pour agents sandbox.
 
-Pourquoi ce fichier existe (cicatrice 2026-05-23, chantier #94) :
+Pourquoi ce fichier existe (scar 2026-05-23, jobsite #94) :
   Les sous-claude spawnés par sy_task_worker via atlas-spawn-claude.mjs tournent
   dans un contexte host Linux (pas dans Docker). Ils n'ont pas accès :
     - au hostname interne Docker `sy_postgres` (non résolvable depuis le host)
