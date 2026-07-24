@@ -67,3 +67,4 @@ not a decision record.
 | [0002](0002-external-tools-placement.md) | External tools placement (`core/shyrka/tools/<family>/`) | Accepted | 2026-07-23 |
 | [0003](0003-automates-camps-and-castes.md) | Automates, camps and castes (camps ↔ pillars, castes in DB, not folders) | Accepted | 2026-07-23 |
 | [0004](0004-engine-organs.md) | Engine organs live in the core (organ = called; worker = entry point) | Accepted | 2026-07-24 |
+| [0005](0005-bucephale-browser-addon.md) | Bucéphale — the browser addon (free CDP driver in core, sold profile-isolation/host/monitoring as addon) | Accepted | 2026-07-24 |

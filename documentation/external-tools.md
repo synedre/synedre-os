@@ -13,14 +13,18 @@ isolated behind a facade so the rest of the runtime stays tool-agnostic.
 
 | Tool | Family | Wrapper | Skill(s) using it | Install | Tier |
 |---|---|---|---|---|---|
-| Chromium / CDP | `browser/` | `core/shyrka/tools/browser/` | QA-capture, browser automation | `02_atlas/infra/` | **free** (engine) |
+| Chromium / CDP (generic driver) | `browser/` | `core/shyrka/tools/browser/` | QA-capture, browser automation | `02_atlas/infra/` | **free** (engine) |
+| Chromium / CDP (dedicated host, profile isolation, monitoring) | — | [`addons/bucephale/`](../addons/bucephale/README.md) | same skills, hardened | `02_atlas/infra/` | **sold** (addon, [ADR-0005](adr/0005-bucephale-browser-addon.md)) |
 | Blender | `three-d/` | `core/shyrka/tools/three-d/` | shape-report, character generation | `02_atlas/infra/` | **addon candidate** |
 | Figma API | `figma/` | `core/shyrka/tools/figma/` | design intake | `02_atlas/infra/` | **free** (engine) |
 | Headless capture | `screenshot/` | `core/shyrka/tools/screenshot/` | several | `02_atlas/infra/` | **free** (engine) |
 
 > **Tier meaning.** *free* = part of the AGPL engine, ships in the public distro.
 > *addon candidate* = domain-specific, may ship as a sold addon outside the AGPL
-> core. The boundary is decided per family, not globally.
+> core. *sold* = decided, addon-only (never ships in `core/`). The boundary is
+> decided per family — and, since ADR-0005, can split WITHIN a family: the
+> generic browser driver is free, the branded host/isolation/monitoring layer
+> on top of it is sold.
 
 ## Conventions
 
