@@ -16,7 +16,8 @@ Detection categories:
   prefix         ac_ / ps_ac_ / ac- residuals (lookbehind protects mac_os).
   path           /home/ubuntu absolute path.
   schema         vaisseau_mere_ac / vaisseau_mere.
-  private_ref    [[feedback_*]] brain links, CLAUDE.md (local-only here).
+  private_ref    [[feedback_*]] links, CLAUDE.md, brain/ paths (the private
+                 moat — local-only here, a dead pointer in shipped code).
   lexicon        FR orchestration vocabulary (chantier/travail/tache/cicatrice/
                  conduite) — a wording defect, not a secret; the published tree
                  must be international (EN: jobsite/work_order/task/scar/
@@ -77,8 +78,9 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern]] = [
         r"(?i)(postgresql|mysql|redis|mongodb|amqp)://[^:@\s]+:[^@\s]{6,}@")),
     # '-p<password>' is a STANDALONE flag (space/bol before), never a sub-token
     # of a long flag — so exclude a preceding '-' too, else '--porcelain' /
-    # '--printf' leak through as a false db password.
-    ("db_password_cli", re.compile(r"(?<![\w-])-p[^\s'\"\\,;]{8,}")),
+    # '--printf' leak through as a false db password. A preceding '}' is an
+    # f-string interpolation boundary (f"/tmp/{tag}-prompt.txt"), not a flag.
+    ("db_password_cli", re.compile(r"(?<![\w}-])-p[^\s'\"\\,;]{8,}")),
     ("email", re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")),
     ("high_entropy_secret", re.compile(r'(?<=[="\'\s])([A-Za-z0-9+/]{40,}={0,2})(?=["\'\s]|$)')),
 ]
@@ -100,6 +102,11 @@ _DEFAULT_SCHEMA_TOKENS = (
 )
 _MEMORY_LINK_RE = re.compile(r"\[\[[a-zA-Z0-9_]+\]\]")
 _CLAUDEMD_RE = re.compile(r"CLAUDE\.md", re.IGNORECASE)
+# A pointer to the private brain/ moat (gitignored, never shipped). In a CODE
+# file (the only surface this gate scans) a brain/ path is a dead pointer at
+# best, a private-note leak at worst — sy_scrub.strip_private_refs drops it; this
+# is the fail-closed backstop if one is reintroduced.
+_BRAIN_REF_RE = re.compile(r"brain/[A-Za-z0-9_][A-Za-z0-9_./-]*")
 # FR orchestration vocabulary (pre-rename, decided 2026-07-24: jobsite /
 # work_order / task / scar / playbook). Not a secret — a WORDING defect: the
 # published tree must be international. Boundaries mirror sy_scrub's lexicon
@@ -168,6 +175,8 @@ def scan_text(
     for m in _MEMORY_LINK_RE.finditer(text):
         add("private_ref", m, m.group(0))
     for m in _CLAUDEMD_RE.finditer(text):
+        add("private_ref", m, m.group(0))
+    for m in _BRAIN_REF_RE.finditer(text):
         add("private_ref", m, m.group(0))
     if lexicon_check:
         for m in _LEXICON_RE.finditer(text):

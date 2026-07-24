@@ -26,6 +26,12 @@ Transforms (order matters — see scrub_text):
      at PUBLIC_SCHEMA; a separate pass because '_ac' suffix evades prefixes.
   6. rename proprietary prefixes (ps_ac_ -> sy_ BEFORE ac_ -> sy_; kebab
      ac- -> sy-). Lookbehind keeps mid-word 'ac' (mac_os) intact.
+ 6b. remap import paths        (packaged monolith imports -> flat OSS module
+     names: synedre.sy_entities.base -> sy_entity_base). Runs right after the
+     prefix rename because the map keys are POST-rename; extracted facades
+     import each other FLAT (from sy_env import ...), resolved by sys.path at
+     install time. Unknown paths are left as-is (fail-safe: a documented
+     dangling lazy import beats a wrong guess).
   7. strip pg_dump artifacts    (banner / \\restrict nonce / version lines /
      SET block / set_config) — pg_dump 16 boilerplate; the \\restrict nonce is
      an ephemeral token that must never ship. Line-anchored, no-op on prose.
@@ -102,13 +108,26 @@ def strip_proprietary_headers(text: str) -> str:
 # ---- 2. private refs --------------------------------------------------------
 _MEMORY_LINK_RE = re.compile(r"\[\[[a-zA-Z0-9_]+\]\]")
 _CLAUDEMD_RE = re.compile(r"CLAUDE\.md", re.IGNORECASE)
+# A line that is nothing but a pointer to the private brain/ moat (gitignored,
+# never shipped) — a docstring/comment line like 'brain/inbox/2026-...-note.md.'.
+# Dropped whole: the leading comment/quote prefix is optional, the trailing
+# punctuation is swallowed. brain/ paths are never valid in the OSS tree.
+_BRAIN_LINE_RE = re.compile(
+    r"^[ \t]*[#\"'*]*[ \t]*brain/[^\n]*\n?", re.MULTILINE)
+# Any residual inline brain/ path token (mid-sentence reference), stripped to
+# nothing so a dangling private pointer never survives.
+_BRAIN_INLINE_RE = re.compile(r"brain/[A-Za-z0-9_][A-Za-z0-9_./-]*")
 
 
 def strip_private_refs(text: str) -> str:
-    """Remove references to the private brain ([[feedback_*]] etc.) and to the
-    local-only CLAUDE.md (gitignored in this repo -> a broken link if kept)."""
+    """Remove references to the private brain ([[feedback_*]] links, bare
+    brain/ paths) and to the local-only CLAUDE.md (gitignored in this repo -> a
+    broken link if kept). brain/ is the private moat: any reference to it in
+    shipped code is a dead pointer at best, a leak at worst."""
     text = _MEMORY_LINK_RE.sub("", text)
     text = _CLAUDEMD_RE.sub("", text)
+    text = _BRAIN_LINE_RE.sub("", text)
+    text = _BRAIN_INLINE_RE.sub("", text)
     return text
 
 
@@ -217,7 +236,51 @@ def rename_prefixes(text: str) -> str:
     return text
 
 
-# ---- 6. pg_dump artifacts ---------------------------------------------------
+# ---- 6b. import paths (packaged monolith -> flat OSS) ------------------------
+# The renames above fix module NAMES (ac_env -> sy_env) but not module PATHS: a
+# monolith import like `from synedre.ac_entities.base import X` comes out of
+# rename_prefixes as `from synedre.sy_entities.base import X` — a package path
+# that exists nowhere in the OSS tree (the facades live flat in core/shyrka/ and
+# the pillar dirs, resolved by sys.path at install time). This pass remaps each
+# known packaged path to its flat OSS module name. Keys are POST-rename (the
+# pass runs right after rename_prefixes). One entry per extracted module that
+# is imported somewhere; unknown paths survive untouched — fail-safe, a dangling
+# lazy import is documented in publish-whitelist.txt rather than guessed at.
+_DEFAULT_IMPORT_MAP = (
+    # one entry per extracted module (mechanical rule: extract a module, add
+    # its packaged path here — the integration test's flat-import check is the
+    # backstop when one is forgotten)
+    ("synedre.sy_entities.base", "sy_entity_base"),
+    ("synedre.sy_pg_contract", "sy_pg_contract"),
+    ("synedre.sy_env", "sy_env"),
+    ("synedre.db", "sy_db"),
+    ("synedre.sy_logger", "sy_logger"),
+    ("synedre.sy_cron_beat", "sy_cron_beat"),
+    ("synedre.sy_reflex", "sy_reflex"),
+    ("synedre.sy_conscience_health", "sy_conscience_health"),
+    ("synedre.sy_agent_runner", "sy_agent_runner"),
+    ("synedre.sy_session_split", "sy_session_split"),
+    ("synedre.sy_session_handoff_resume", "sy_session_handoff_resume"),
+    ("synedre.sy_session_start", "sy_session_start"),
+)
+
+
+def remap_import_paths(text: str, import_map=None) -> str:
+    """Remap packaged monolith import paths to the flat OSS module names.
+
+    Exact-string, longest-first (so 'synedre.sy_entities.base' wins before any
+    shorter overlapping key), wherever the token appears — import statements
+    and prose alike. Unknown paths are left as-is: better a documented dangling
+    lazy import than a wrong guess."""
+    for old, new in sorted(
+        import_map if import_map is not None else _DEFAULT_IMPORT_MAP,
+        key=lambda p: len(p[0]), reverse=True,
+    ):
+        text = text.replace(old, new)
+    return text
+
+
+# ---- 7. pg_dump artifacts ---------------------------------------------------
 # pg_dump 16 prefixes every dump with session boilerplate (a block of SET
 # statements + a set_config search_path call), a banner, version metadata and a
 # \\restrict <token> line. The \\restrict token is a dump-integrity nonce (PG
@@ -262,7 +325,7 @@ def strip_pg_dump_artifacts(text: str) -> str:
     return text
 
 
-# ---- 7. SQL messages (curated FR -> EN, exact-string) ------------------------
+# ---- 8. SQL messages (curated FR -> EN, exact-string) ------------------------
 # The engine functions were authored in French in the monolith. Their RAISE
 # EXCEPTION texts and in-function comments are prose a regex cannot translate,
 # so each known FR string maps to a curated EN replacement. Keys must match the
@@ -335,7 +398,7 @@ def translate_sql_messages(text: str, messages=None) -> str:
     return text
 
 
-# ---- 8. lexicon (FR building-trade vocabulary -> EN) -------------------------
+# ---- 9. lexicon (FR building-trade vocabulary -> EN) -------------------------
 # Wording decided by Alex 2026-07-24 (sy_lexicon entry_scope='oss-distro'): the
 # building-site semantics survive translation — chantier->jobsite,
 # travail->work_order, tache->task, cicatrice->scar, conduite->playbook; agent
@@ -369,7 +432,7 @@ def translate_lexicon(text: str, lexicon=None) -> str:
     return text
 
 
-# ---- 9. DB comments (curated EN overlay, fail-closed) ------------------------
+# ---- 10. DB comments (curated EN overlay, fail-closed) -----------------------
 # COMMENT ON statements are French prose dumped from the private DB. A curated
 # overlay (comments-en.json: {"tables": {name: en}, "columns": {"t.c": en},
 # "constraints": {name: en}, "indexes": {name: en}} — keys use the POST-lexicon
@@ -422,7 +485,7 @@ def translate_db_comments(text: str, comment_map: dict | None = None) -> str:
     return _COMMENT_STMT_RE.sub(_repl, text)
 
 
-# ---- 10. prose (curated FR -> EN blocks, exact-string) -----------------------
+# ---- 11. prose (curated FR -> EN blocks, exact-string) -----------------------
 # The facades were authored in French in the monolith: whole docstrings, comment
 # blocks and user-facing echo messages. Like the SQL messages, prose is text a
 # regex cannot translate — each known FR block maps to a curated EN replacement
@@ -457,13 +520,14 @@ def translate_prose(text: str, pairs=None) -> str:
 # ---- orchestration ----------------------------------------------------------
 def scrub_text(
     text, denylist=None, *, path_map=None, schema_tokens=None,
-    sql_messages=None, lexicon=None, comment_map=None, prose_pairs=None,
+    import_map=None, sql_messages=None, lexicon=None, comment_map=None,
+    prose_pairs=None,
 ) -> str:
     """Apply all transforms in order. denylist=None skips codenames;
     comment_map=None skips the COMMENT overlay (facade path); prose_pairs=None
-    skips the prose overlay. path_map / schema_tokens / sql_messages / lexicon
-    override the monolith defaults (neutral test fixtures pass their own so the
-    test stays token-free in the public repo)."""
+    skips the prose overlay. path_map / schema_tokens / import_map /
+    sql_messages / lexicon override the monolith defaults (neutral test
+    fixtures pass their own so the test stays token-free in the public repo)."""
     text = strip_proprietary_headers(text)
     text = strip_private_refs(text)
     if denylist:
@@ -471,6 +535,7 @@ def scrub_text(
     text = relativize_paths(text, path_map)
     text = scrub_schema_namespace(text, schema_tokens)
     text = rename_prefixes(text)
+    text = remap_import_paths(text, import_map)
     text = strip_pg_dump_artifacts(text)
     text = translate_sql_messages(text, sql_messages)
     text = translate_lexicon(text, lexicon)

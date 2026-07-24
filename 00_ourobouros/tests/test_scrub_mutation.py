@@ -106,6 +106,14 @@ MUTANTS = [
     ("prefix_kebab",
      'service = ac-runner\n',
      ["ac-runner"], ["sy-runner"]),
+    # import paths — a packaged monolith import must come out FLAT (the OSS
+    # module name), not as a package path that resolves nowhere in the OSS
+    # tree. 'synedre' is the public product name (like the lexicon words),
+    # not a codename/path/schema — the fictional-literals invariant holds.
+    ("import_path_remap",
+     'from synedre.ac_entities.base import _esc\n',
+     ["ac_entities", "sy_entities", "synedre."],
+     ["from sy_entity_base import _esc"]),
     # private refs — brain links + local-only CLAUDE.md
     ("private_ref_brain_link",
      '# cf [[feedback_run_vs_chantier]] section 2\n',
@@ -113,6 +121,12 @@ MUTANTS = [
     ("private_ref_claudemd",
      '# see local CLAUDE.md for the rule\n',
      ["CLAUDE.md"], []),
+    # private ref — a pointer to the gitignored brain/ moat. A whole doc line
+    # that is only a brain/ ref is dropped; the path token never survives.
+    ("private_ref_brain_path",
+     'ONE `AgentRunner`, see the design rationale.\n'
+     'brain/inbox/2026-01-01-some-private-note.md.\n',
+     ["brain/", ".md"], ["ONE `AgentRunner`"]),
     # pg_dump 16 boilerplate — banner / \restrict nonce / SET block / set_config
     # / version metadata are stripped. The nonce is an ephemeral token that must
     # never ship. A codename (acme) + schema token ride along so the gate still
@@ -173,6 +187,14 @@ def test_aggregate_scrub_then_gate_clean():
 
 
 # === LEXICON: boundaries + curated overlays ==================================
+def test_db_password_flag_no_false_positive_on_fstring():
+    """A '-p...' preceded by '}' is an f-string interpolation suffix
+    (f"/tmp/{tag}-prompt.txt"), not a CLI password flag. The real flag form
+    ('mysql -u root -pSuperSecret123') is asserted by SECRET_MUTANTS."""
+    text = 'prompt_file = Path(f"/tmp/{tag}-prompt.txt")\n'
+    assert not [f for f in _gate(text) if f.category == "db_password_cli"]
+
+
 def test_lexicon_boundaries_no_false_positive():
     """Mid-word hits must NOT fire: plain-language words containing a lexicon
     token ('moustache', 'detache', 'travailler') and accent-adjacent forms
@@ -306,6 +328,7 @@ def test_prose_map_keys_match_staged_tree(repo_root, release_dir):
         for p in sorted((repo_root / "core").rglob("*"))
         + sorted((repo_root / "02_atlas" / "hooks").rglob("*"))
         + sorted((repo_root / "02_atlas" / "workers").rglob("*"))
+        + sorted((repo_root / "03_sun_wukong").rglob("*"))
         if p.is_file() and p.suffix in (".py", ".sh")
         and "release" not in p.parts
     )
