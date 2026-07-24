@@ -82,8 +82,11 @@ def audit_history(root: Path, denylist: list[str]) -> list:
     if not files:
         return []
     diff = _git(root, "log", "-p", "--all", "--no-color", "--", *files)
+    # ln[1:] strips the +/- diff marker: it is diff SYNTAX, not content — kept,
+    # a deleted line starting with 'process...' reads '-process...' and false-
+    # positives the '-p<password>' secret pattern.
     content = "\n".join(
-        ln for ln in diff.splitlines()
+        ln[1:] for ln in diff.splitlines()
         if ln[:1] in "+-" and ln[:3] not in ("+++", "---")
     )
     findings = []

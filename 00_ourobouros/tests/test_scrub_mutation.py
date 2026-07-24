@@ -371,6 +371,34 @@ def test_secret_survives_scrub_and_is_flagged(sid, text):
         assert f.snippet == "<SECRET>", f"{sid}: gate exposed the value: {f.snippet!r}"
 
 
+def test_history_audit_diff_marker_not_content(tmp_path):
+    """GUARD (whole class): the history audit scans diff CONTENT, never diff
+    SYNTAX. A deleted line starting with 'process...' reads '-process...' in
+    `git log -p`; with the marker kept it false-positives the '-p<password>'
+    secret pattern. Build a real 2-commit repo (add then delete the line) and
+    assert the audit stays clean."""
+    import subprocess
+
+    from sy_publish_audit import audit_history
+
+    def g(*args):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True,
+                       capture_output=True,
+                       env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+                            "HOME": str(tmp_path), "PATH": "/usr/bin:/bin"})
+
+    g("init", "-q")
+    f = tmp_path / "sy_worker.py"
+    f.write_text("x = 1\nprocess_environment_of_the_cron = True\n", encoding="utf-8")
+    g("add", "sy_worker.py")
+    g("commit", "-qm", "add")
+    f.write_text("x = 1\n", encoding="utf-8")
+    g("commit", "-qam", "delete the process line")
+    findings = audit_history(tmp_path, ["acme"])
+    assert not [x for x in findings if x.category == "db_password_cli"], findings
+
+
 # === INTEGRATION: real writer over the whitelisted files =====================
 def test_integration_writer_whitelist_passes_gate(
     monolith_root, repo_root, release_dir, real_denylist, tmp_path,
