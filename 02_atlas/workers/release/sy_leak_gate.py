@@ -55,7 +55,10 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
-from sy_scrub import load_denylist, resolve_denylist_path  # noqa: E402
+from sy_scrub import (  # noqa: E402
+    load_denylist, resolve_denylist_path,
+    load_private_config, resolve_private_config_path,
+)
 
 
 @dataclass
@@ -208,9 +211,15 @@ def scan_root(
     root: Path,
     denylist: list[str],
     exclude_tests: bool = True,
+    *,
+    path_literals=None,
+    schema_tokens=None,
 ) -> list[Finding]:
     """Walk *root*, scanning every decodable text file. Non-text files are
-    reported as a 'binary' finding — the gate fails on them, never skips silently."""
+    reported as a 'binary' finding — the gate fails on them, never skips
+    silently. *path_literals* / *schema_tokens* override scan_text's own
+    (empty, T3.4) defaults — the caller sources them from the same private
+    config sy_scrub uses, so scrub and gate never observe different truths."""
     findings: list[Finding] = []
     for p in sorted(root.rglob("*")):
         if not p.is_file():
@@ -225,13 +234,15 @@ def scan_root(
         except UnicodeDecodeError:
             findings.append(Finding("binary", str(p), 0, "<non-text>"))
             continue
-        for f in scan_text(text, denylist):
+        for f in scan_text(text, denylist, path_literals=path_literals, schema_tokens=schema_tokens):
             f.path = str(p)
             findings.append(f)
     return findings
 
 
-def scan_tracked_code(root, denylist, include_tests=False) -> list[Finding]:
+def scan_tracked_code(
+    root, denylist, include_tests=False, *, path_literals=None, schema_tokens=None,
+) -> list[Finding]:
     """Scan git-tracked CODE files only — the publish-relevant surface.
 
     Three filters, each closing a real false-positive class seen on this repo:
@@ -246,14 +257,18 @@ def scan_tracked_code(root, denylist, include_tests=False) -> list[Finding]:
       _EXCLUDE_DIRS  — same boundary as scan_root (pipeline source, fixtures).
 
     Falls back to scan_root (filesystem walk) when *root* is not a git repo, so
-    the integration test's tmp tree still works.
+    the integration test's tmp tree still works. *path_literals* / *schema_tokens*
+    thread through to scan_text same as scan_root (T3.4 private config).
     """
     out = subprocess.run(
         ["git", "-C", str(root), "ls-files"],
         capture_output=True, text=True,
     )
     if out.returncode != 0 or not out.stdout.strip():
-        return scan_root(root, denylist, exclude_tests=not include_tests)
+        return scan_root(
+            root, denylist, exclude_tests=not include_tests,
+            path_literals=path_literals, schema_tokens=schema_tokens,
+        )
     findings: list[Finding] = []
     for rel in out.stdout.splitlines():
         rel = rel.strip()
@@ -272,7 +287,7 @@ def scan_tracked_code(root, denylist, include_tests=False) -> list[Finding]:
         except UnicodeDecodeError:
             findings.append(Finding("binary", str(p), 0, "<non-text>"))
             continue
-        for f in scan_text(text, denylist):
+        for f in scan_text(text, denylist, path_literals=path_literals, schema_tokens=schema_tokens):
             f.path = str(p)
             findings.append(f)
     return findings
@@ -291,13 +306,21 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Leak gate over a staged OSS tree.")
     ap.add_argument("--root", required=True, help="OSS repo root to scan.")
     ap.add_argument("--denylist", default=str(_HERE / "sy_codename_denylist.txt"))
+    ap.add_argument("--private-config", default=str(_HERE / "sy_private_config.json"),
+                    help="YOUR path map / schema tokens (T3.4) — real file if "
+                         "present, else the shipped .example.json.")
     ap.add_argument("--include-tests", action="store_true",
                     help="Also scan 00_ourobouros/tests/ (off by default).")
     args = ap.parse_args()
 
     root = Path(args.root).resolve()
     deny = load_denylist(resolve_denylist_path(args.denylist))
-    findings = scan_tracked_code(root, deny, include_tests=args.include_tests)
+    private_cfg = load_private_config(resolve_private_config_path(args.private_config))
+    findings = scan_tracked_code(
+        root, deny, include_tests=args.include_tests,
+        path_literals=[lit for lit, _ in private_cfg["path_map"]],
+        schema_tokens=private_cfg["schema_tokens"],
+    )
 
     if findings:
         print(report(findings), file=sys.stderr)

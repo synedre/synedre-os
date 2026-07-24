@@ -1,0 +1,16 @@
+{
+ "path_map": [
+  [
+   "/home/YOURUSER/your-monolith",
+   "${MONOLITH_ROOT}"
+  ],
+  [
+   "/home/YOURUSER",
+   "${HOME}"
+  ]
+ ],
+ "schema_tokens": [
+  "your_private_pg_schema"
+ ],
+ "sql_messages": []
+}

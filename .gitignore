@@ -30,6 +30,10 @@ core/shyrka/brain/*
 # The .example template ships; the real list never does (CLAUDE.md Rule 3).
 02_atlas/workers/release/sy_codename_denylist.txt
 
+# ── Local release private config (YOUR monolith paths / schema / SQL messages) ──
+# Same rule: the .example.json template ships, the real one never does.
+02_atlas/workers/release/sy_private_config.json
+
 # ── Business data (01_founder) — PII ──
 01_founder/customers/**
 01_founder/leads/**

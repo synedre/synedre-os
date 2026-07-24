@@ -47,6 +47,17 @@ def real_denylist() -> list[str]:
     return sy_scrub.load_denylist(path)
 
 
+@pytest.fixture(scope="session")
+def real_private_config() -> dict:
+    """The gitignored real private release config if present, else the shipped
+    ``.example.json`` — mirrors real_denylist. Read as a dict (never a hardcoded
+    literal here), used by the integration test to prove path/schema/SQL-message
+    scrubbing end-to-end without naming Alex's monolith in this committed file.
+    """
+    path = sy_scrub.resolve_private_config_path(_RELEASE / "sy_private_config.json")
+    return sy_scrub.load_private_config(path)
+
+
 @pytest.fixture
 def monolith_root():
     """The private source tree.

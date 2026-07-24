@@ -424,27 +424,45 @@ def test_history_audit_diff_marker_not_content(tmp_path):
 
 # === INTEGRATION: real writer over the whitelisted files =====================
 def test_integration_writer_whitelist_passes_gate(
-    monolith_root, repo_root, release_dir, real_denylist, tmp_path,
+    monolith_root, repo_root, release_dir, real_denylist, real_private_config, tmp_path,
 ):
     """Run the real writer on the whitelisted monolith files into a tmp OSS root,
     then assert the gate is clean AND no codename/path/header survived — by
     iterating the real denylist, never hardcoding a codename. The real
     prose-en.json rides along, so 'gate clean' includes the accents category:
-    the staged tree is proven anglicized end-to-end."""
+    the staged tree is proven anglicized end-to-end. path_map/schema_tokens
+    come from real_private_config (T3.4): scrub_text's own defaults are empty,
+    so an integration run that forgot to load the private config would leak
+    the raw path/schema straight through — the point of this test."""
     from sy_extract import parse_whitelist, write_release
 
     wl = (repo_root / "publish-whitelist.txt").read_text(encoding="utf-8")
     pairs = parse_whitelist(wl)
     prose_path = release_dir / "prose-en.json"
     prose = sy_scrub.load_prose_pairs(prose_path) if prose_path.is_file() else None
-    written = write_release(Path(monolith_root), tmp_path, pairs, real_denylist, prose)
+    written = write_release(
+        Path(monolith_root), tmp_path, pairs, real_denylist, prose,
+        path_map=real_private_config["path_map"],
+        schema_tokens=real_private_config["schema_tokens"],
+        sql_messages=real_private_config["sql_messages"],
+    )
     assert len(written) == len(pairs), f"wrote {len(written)} / {len(pairs)}"
 
-    # 1. gate over the staged tree (defaults = real monolith vocab)
-    findings = scan_root(tmp_path, real_denylist)
+    # 1. gate over the staged tree (path_literals/schema_tokens = same private config)
+    findings = scan_root(
+        tmp_path, real_denylist,
+        path_literals=[lit for lit, _ in real_private_config["path_map"]],
+        schema_tokens=real_private_config["schema_tokens"],
+    )
     assert not findings, "integration: leaks after scrub:\n" + report(findings)
 
-    # 2. iterate the real denylist — never hardcode a codename in this file
+    # 2. iterate the real denylist — never hardcode a codename in this file.
+    # The header/path checks reuse sy_scrub's own line-anchored detectors
+    # (not a blind substring): a facade may legitimately QUOTE '@author X' or
+    # a path literal in a comment that documents the pattern itself (e.g.
+    # sy_reflex.py explaining why a product name is excluded from its own
+    # tenant-codename matcher) — a naive substring check false-positives on
+    # exactly that, which line-anchoring (matching the real gate) does not.
     for f in tmp_path.rglob("*"):
         if not f.is_file():
             continue
@@ -456,7 +474,10 @@ def test_integration_writer_whitelist_passes_gate(
         for token in real_denylist:
             assert token.lower() not in low, (
                 f"codename {token!r} leaked in {f.relative_to(tmp_path)}")
-        assert "@author" not in content, (
-            f"@author header survived in {f.relative_to(tmp_path)}")
-        assert "/home/ubuntu" not in content, (
-            f"absolute path survived in {f.relative_to(tmp_path)}")
+        assert not sy_scrub._HEADER_LINE_RE.search(content), (
+            f"@author/@copyright header survived in {f.relative_to(tmp_path)}")
+        assert not sy_scrub._LICENSE_PROP_RE.search(content), (
+            f"@license Propriétaire header survived in {f.relative_to(tmp_path)}")
+        for literal, _ in real_private_config["path_map"]:
+            assert literal not in content, (
+                f"absolute path {literal!r} survived in {f.relative_to(tmp_path)}")

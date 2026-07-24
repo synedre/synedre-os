@@ -17,6 +17,10 @@ Inputs (env vars):
   SY_DENYLIST   optional, default <DEST_ROOT>/02_atlas/workers/release/sy_codename_denylist.txt.
   SY_PROSE      optional, default <DEST_ROOT>/02_atlas/workers/release/prose-en.json
                 (curated FR->EN prose overlay; absent file = pass skipped).
+  SY_PRIVATE_CONFIG  optional, default <DEST_ROOT>/02_atlas/workers/release/
+                sy_private_config.json (YOUR monolith's path map / schema
+                tokens / SQL messages; real file if present, else the shipped
+                .example.json placeholder — same pattern as SY_DENYLIST).
 
 Safety:
   - Every dest is resolved and asserted to live under DEST_ROOT (no path escape).
@@ -35,6 +39,7 @@ if str(_HERE) not in sys.path:
 
 from sy_scrub import (  # noqa: E402
     scrub_text, load_denylist, resolve_denylist_path, load_prose_pairs,
+    load_private_config, resolve_private_config_path,
 )
 
 
@@ -65,11 +70,16 @@ def write_release(
     pairs: list[tuple[str, str]],
     denylist: list[str],
     prose_pairs: list | None = None,
+    path_map: list | None = None,
+    schema_tokens: list | None = None,
+    sql_messages: list | None = None,
 ) -> list[tuple[str, str]]:
     """Scrub and write every whitelisted file. Returns the list of (src, dst)
     actually written. Raises on missing source, non-text, or dest escaping
     DEST_ROOT. *prose_pairs* is the curated FR->EN prose overlay
-    (prose-en.json), applied as the last scrub transform."""
+    (prose-en.json), applied as the last scrub transform. *path_map* /
+    *schema_tokens* / *sql_messages* come from the private release config
+    (T3.4) — None means scrub_text's own (empty, safe) defaults."""
     written: list[tuple[str, str]] = []
     dest_resolved = dest_root.resolve()
     for src_rel, dst_rel in pairs:
@@ -77,7 +87,10 @@ def write_release(
         if not src.is_file():
             raise FileNotFoundError(f"whitelist source missing: {src}")
         text = src.read_text(encoding="utf-8")  # non-text raises UnicodeDecodeError -> loud fail
-        clean = scrub_text(text, denylist, prose_pairs=prose_pairs)
+        clean = scrub_text(
+            text, denylist, prose_pairs=prose_pairs, path_map=path_map,
+            schema_tokens=schema_tokens, sql_messages=sql_messages,
+        )
 
         dst = (dest_root / dst_rel)
         dst_resolved = dst.resolve()
@@ -117,8 +130,16 @@ def main() -> None:
     prose_path = Path(os.environ.get("SY_PROSE", _HERE / "prose-en.json"))
     prose = load_prose_pairs(prose_path) if prose_path.is_file() else None
 
+    private_path = Path(os.environ.get("SY_PRIVATE_CONFIG", _HERE / "sy_private_config.json"))
+    private_cfg = load_private_config(resolve_private_config_path(private_path))
+
     try:
-        written = write_release(src_root_p, dest_root_p, pairs, deny, prose)
+        written = write_release(
+            src_root_p, dest_root_p, pairs, deny, prose,
+            path_map=private_cfg["path_map"],
+            schema_tokens=private_cfg["schema_tokens"],
+            sql_messages=private_cfg["sql_messages"],
+        )
     except (FileNotFoundError, UnicodeDecodeError, ValueError) as exc:
         print(f"sy_extract: ABORT — {exc}", file=sys.stderr)
         sys.exit(1)

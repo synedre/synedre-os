@@ -71,15 +71,44 @@ TENANT_PLACEHOLDER = "<TENANT>"
 SYNEDRE_ROOT_VAR = "${SYNEDRE_ROOT}"
 HOME_VAR = "${HOME}"
 
-# Monolith path literals. Exposed as an override point so neutral test fixtures
-# can pass their own map; the defaults match Alex's install. Carrying the real
-# literals here is a residual vocabulary leak (release/ is gate-excluded by
-# construction — see sy_leak_gate._EXCLUDE_DIRS); moving them to a private
-# gitignored config is a T3.4 (publish-readiness) task.
-_DEFAULT_PATH_MAP = (
-    ("/home/ubuntu/synedre-os", SYNEDRE_ROOT_VAR),
-    ("/home/ubuntu", HOME_VAR),
-)
+# Neutral-by-default: the REAL monolith path map / schema tokens / SQL messages
+# never live as Python literals in this shipped file (T3.4 publish-readiness —
+# they used to, which was a residual vocabulary leak carrying Alex's own home
+# path). They live in sy_private_config.json (gitignored), loaded by the CALLER
+# (sy_extract.main / sy_leak_gate.main) and passed in as explicit overrides —
+# same pattern as the codename denylist. Empty here means "no-op unless the
+# caller supplies a config": correct for anyone else's monolith, and the gate
+# reads the SAME private config, so there is no observation gap for Alex's own
+# runs (see resolve_private_config_path).
+_DEFAULT_PATH_MAP: tuple = ()
+
+
+def resolve_private_config_path(preferred: Path | str) -> Path:
+    """Return the private release config to use: the real (gitignored) file if
+    present, else the shipped .example template — mirrors resolve_denylist_path.
+    The real file holds YOUR monolith's path map / schema tokens / SQL messages
+    and is private (CLAUDE.md Rule 3); the example carries neutral placeholders."""
+    pref = Path(preferred)
+    if pref.is_file():
+        return pref
+    example = pref.with_suffix(pref.suffix + ".example")
+    if example.is_file():
+        return example
+    raise FileNotFoundError(f"no private config at {pref} (nor {example})")
+
+
+def load_private_config(path: Path | str) -> dict:
+    """Read the private release config (JSON: path_map / schema_tokens /
+    sql_messages). Missing keys default to empty — a config that only overrides
+    one axis (e.g. just schema_tokens) is valid."""
+    import json
+
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    return {
+        "path_map": [tuple(p) for p in data.get("path_map", [])],
+        "schema_tokens": list(data.get("schema_tokens", [])),
+        "sql_messages": [tuple(p) for p in data.get("sql_messages", [])],
+    }
 
 
 # ---- 1. proprietary headers -------------------------------------------------
@@ -195,16 +224,11 @@ _AC_KEBAB_RE = re.compile(r"(?<![A-Za-z0-9])ac-")
 # schema, named after the neutral engine dir core/shyrka/. A FIXED public name
 # (not an env var) — Alex's call, 2026-07-23.
 PUBLIC_SCHEMA = "shyrka"
-# Override point for the tokens to collapse into PUBLIC_SCHEMA (residual vocab
-# leak in the pipeline source, gate-excluded, T3.4 moves to private config). The
-# full private vocabulary of the monolith's central mothership/schema concept:
-# 'vaisseau_mere_ac' (PG schema) + 'vaisseau_mere' (FR root), 'mother_ship' (EN
-# snake) + 'mothership' (EN fused). Order is irrelevant — scrub_schema_namespace
-# sorts longest-first so the '_ac' suffix is taken whole before the bare root.
-# All collapse to 'shyrka' everywhere, INCLUDING comments (Alex, 2026-07-23).
-_DEFAULT_SCHEMA_TOKENS = (
-    "vaisseau_mere_ac", "vaisseau_mere", "mother_ship", "mothership",
-)
+# The private vocabulary to collapse into PUBLIC_SCHEMA (T3.4: moved to
+# sy_private_config.json, see resolve_private_config_path / load_private_config
+# above — the .example ships a neutral placeholder). Empty by default: a
+# no-op unless the caller supplies a config, same rationale as _DEFAULT_PATH_MAP.
+_DEFAULT_SCHEMA_TOKENS: tuple = ()
 
 
 def scrub_schema_namespace(text: str, schema_tokens=None) -> str:
@@ -328,62 +352,13 @@ def strip_pg_dump_artifacts(text: str) -> str:
 # ---- 8. SQL messages (curated FR -> EN, exact-string) ------------------------
 # The engine functions were authored in French in the monolith. Their RAISE
 # EXCEPTION texts and in-function comments are prose a regex cannot translate,
-# so each known FR string maps to a curated EN replacement. Keys must match the
-# dumped text EXACTLY (including the SQL '' quote doubling); identifiers left
-# as-is in the EN values are renamed right after by translate_lexicon, which is
-# why this pass runs BEFORE it. Carrying the FR originals here is the same
-# residual-vocabulary situation as _DEFAULT_SCHEMA_TOKENS (release/ is
-# gate-excluded by construction).
-_DEFAULT_SQL_MESSAGES = (
-    ("'chantier % : passage done refuse — il reste des taches non terminees "
-     "(ni done ni cancelled). Termine ou annule-les d''abord.'",
-     "'chantier %: cannot transition to done — open tasks remain (neither done "
-     "nor cancelled). Finish or cancel them first.'"),
-    ("'depends_on_travail_id est en lecture seule (DEPRECATED tache #974). '",
-     "'depends_on_travail_id is read-only (DEPRECATED). '"),
-    ("'Utiliser sy_travail_dep pour les dépendances N:M. '",
-     "'Use sy_travail_dep for N:M dependencies. '"),
-    ("'outcome-kpi-gate: chantier % (id=%) porte un outcome_kpi non atteint "
-     "(outcome_reached_at NULL) — ne peut pas s''archiver tant que le KPI "
-     "n''est pas confirmé atteint (chantier #397, cicatrice #989 "
-     "chantier-propriétaire-à-KPI). KPI = %'",
-     "'outcome-kpi-gate: chantier % (id=%) carries an unreached outcome_kpi "
-     "(outcome_reached_at NULL) — cannot archive until the KPI is confirmed "
-     "reached. KPI = %'"),
-    ("'guardrail-gate: un chantier ne peut pas être INSERTé directement en "
-     "status=% (codename=%) — il doit TRANSITER (planning→...→done) pour "
-     "passer par le gate de clôture (chantier #380 scar-to-guardrail-engine, "
-     "correctif #984)'",
-     "'guardrail-gate: a chantier cannot be INSERTed directly with status=% "
-     "(codename=%) — it must TRANSITION (planning→...→done) through the "
-     "closing gate'"),
-    ("'guardrail-gate: chantier % (id=%) a % cicatrice(s) P0/P1 "
-     "guardrail_status=todo — pose le garde-fou (check_added + "
-     "guardrail_status=enforced) OU justifie vigilance avant de clore "
-     "(chantier #380 scar-to-guardrail-engine)'",
-     "'guardrail-gate: chantier % (id=%) has % P0/P1 cicatrice(s) with "
-     "guardrail_status=todo — add the guardrail (check_added + "
-     "guardrail_status=enforced) OR justify vigilance before closing'"),
-    ("'outcome-proof-gate: chantier % (id=%) a requires_outcome_proof=true "
-     "mais outcome_evidence vide — renseigne une preuve (run e2e vert ou KPI "
-     "mesuré) avant de clore (chantier #397, cicatrice #987 "
-     "done-requires-proof)'",
-     "'outcome-proof-gate: chantier % (id=%) has requires_outcome_proof=true "
-     "but outcome_evidence is empty — provide proof (a green e2e run or a "
-     "measured KPI) before closing'"),
-    ("  -- Cas INSERT : un chantier ne peut jamais naître déjà clos. Pas d'OLD\n"
-     "  -- disponible (TG_OP='INSERT') — check catégorique sur NEW uniquement.",
-     "  -- INSERT case: a chantier can never be born already closed. No OLD row\n"
-     "  -- available (TG_OP='INSERT') — categorical check on NEW only."),
-    ("  -- Cas UPDATE (logique existante, inchangée) : transition vers 'done' —\n"
-     "  -- bloque si des cicatrices P0/P1 rattachées restent guardrail_status='todo'.",
-     "  -- UPDATE case: transition to 'done' — blocks while attached P0/P1\n"
-     "  -- cicatrices still sit at guardrail_status='todo'."),
-    ("    -- NULL / vide = sûr. Sinon : refuse un groupe contenant un quantificateur\n"
-     "    -- (…[*+]…) immédiatement suivi d'un quantificateur — ReDoS classique (a+)+ (.*)* …",
-     "    -- NULL / empty = safe. Otherwise: reject a group containing a quantifier\n"
-     "    -- (…[*+]…) immediately followed by a quantifier — classic ReDoS: (a+)+ (.*)* …"),
-)
+# so each known FR string maps to a curated EN replacement — curated per-run in
+# sy_private_config.json (T3.4: moved out of this shipped file, same rationale
+# as _DEFAULT_SCHEMA_TOKENS). Keys must match the dumped text EXACTLY (including
+# the SQL '' quote doubling); identifiers left as-is in the EN values are
+# renamed right after by translate_lexicon, which is why this pass runs BEFORE
+# it. Empty by default: a no-op unless the caller supplies a config.
+_DEFAULT_SQL_MESSAGES: tuple = ()
 
 
 def translate_sql_messages(text: str, messages=None) -> str:
