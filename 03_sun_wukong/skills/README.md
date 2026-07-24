@@ -1,10 +1,17 @@
-# 📖 Wukong's Grimoire (Universal Skills)
+# 📖 Wukong's Grimoire (Free Skills — Harness Mechanics)
 
 > *"You don't die of thirst — you die of drinking from too many sources."*
 
-This directory (`/03_sun_wukong/skills/`) is the single source of cognitive truth
-for Synedre OS. It holds the Monkey King's "Seventy-two metamorphoses": the
-instructions, doctrines and reasoning frames of our AI agents.
+This directory (`/03_sun_wukong/skills/`) holds the **free-tier** skills of
+Synedre OS: the Monkey King's metamorphoses that operate the meta-harness's
+own generic constructs (jobsite/work_order lifecycle, memory recall, system
+status, doctrine/lexicon governance) rather than a domain-specific workflow.
+
+**A skill defaults to addon-tier** ([ADR-0006](../../documentation/adr/0006-skills-default-addon-tier.md))
+and lives inside its addon (`addons/<addon-name>/skills/`) instead — this
+folder is the exception (harness-own-mechanics only), not the general home
+for every skill. The authoring format below governs BOTH tiers: a skill's
+*shape* does not change with its tier, only its folder.
 
 ## 1. The Agnostic Philosophy
 
