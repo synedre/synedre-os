@@ -17,8 +17,8 @@ Transforms (order matters — see scrub_text):
   2. strip private-memory refs  ([[feedback_*]] brain links, CLAUDE.md) — local
      only; a CLAUDE.md reference is a broken link here (gitignored in this repo).
   3. scrub tenant codenames     (substring, case-insensitive -> <TENANT>,
-     denylist-driven). Substring, not '\\b' — 'palimex_v2' must not slip past
-     '\\bpalimex\\b'.
+     denylist-driven). Substring, not '\\b' — 'acme_v2' must not slip past
+     '\\backme\\b'.
   4. relativize absolute paths  (/home/ubuntu/synedre-os -> ${SYNEDRE_ROOT},
      then /home/ubuntu -> ${HOME}). SYNEDRE_ROOT before HOME.
   5. rename schema vocabulary   (vaisseau_mere_ac / vaisseau_mere /
@@ -190,10 +190,10 @@ def resolve_denylist_path(preferred: Path | str) -> Path:
 def scrub_codenames(text: str, denylist: list[str]) -> str:
     """Replace any tenant codename (substring, case-insensitive) with <TENANT>.
 
-    Tokens are matched longest-first so 'smokevapeshop' wins over 'smoke' when
+    Tokens are matched longest-first so 'acmeshop' wins over 'acme' when
     both are substrings (sorted here, so any caller-supplied list is safe).
-    Substring deliberately, not '\\b': 'palimex_v2' would slip past '\\bpalimex\\b'.
-    Accept false positives (e.g. the common word 'smoke') over a real leak.
+    Substring deliberately, not '\\b': 'acme_v2' would slip past '\\backme\\b'.
+    Accept false positives (a codename that is also a common word) over a leak.
     """
     for token in sorted(denylist, key=len, reverse=True):
         if not token:

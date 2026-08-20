@@ -56,14 +56,13 @@ scripts/hook-cron-llm-block.sh                ->  02_atlas/hooks/claude/sy_cron_
 #   `chromium --headless` directly, ac_figma_pull.py has no subprocess call
 #   at all) — separate/legacy tools, no coupling, out of scope this wave.
 # ac_screenshot.py -> NOT generic despite appearances (browser-control trap,
-#   ADR-0005 territory): hardcodes --ac/--cms/--palimex CLI flags + 3
-#   real-site URL constants (alexandrecarette.fr, codemyshop.com,
-#   palimex-fruits-secs.com). The scrub pipeline is a text transform, not a
-#   line-deletion tool — <TENANT> substitution mid-identifier breaks Python
-#   syntax (AC_KEY_PAGES/PALIMEX_KEY_PAGES). Needs either a hand-written
-#   generic rewrite (screenshot()/batch_screenshot()/--batch <file> only,
-#   drop the --ac/--cms/--palimex convenience layer) or a future curated
-#   "trim" overlay — not a mechanical scrub job. Deferred, not extracted.
+#   ADR-0005 territory): hardcodes per-tenant CLI flags + 3 real-site URL
+#   constants. The scrub pipeline is a text transform, not a line-deletion
+#   tool — <TENANT> substitution mid-identifier breaks Python syntax
+#   (<TENANT>_KEY_PAGES). Needs either a hand-written generic rewrite
+#   (screenshot()/batch_screenshot()/--batch <file> only, drop the per-tenant
+#   convenience layer) or a future curated "trim" overlay — not a mechanical
+#   scrub job. Deferred, not extracted.
 # core/shyrka/brain/    -> private moat, gitignored
 #
 # NEXT WAVE (dangling lazy imports of the T3.3 facades — all inside functions,
