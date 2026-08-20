@@ -76,4 +76,10 @@ External contributions will be welcomed **after** signing the CLA — see
 
 [AGPL-3.0](LICENSE) — © 2026 Alexandre Carette.
 
+**The code is free. The name is not.** *Synedre* and *CodeMyShop* are
+trademarks held by Alexandre Carette; the AGPL-3.0 grants you the code, not
+the name. Section 7(e) of the licence expressly allows this — see
+[`TRADEMARK.md`](TRADEMARK.md), which is deliberately permissive: almost
+everything you are likely to want to do needs no permission at all.
+
 Part of the **Synedre** ecosystem — a sovereign agentic engine.
