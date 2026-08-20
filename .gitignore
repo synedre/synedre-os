@@ -65,3 +65,9 @@ Thumbs.db
 
 # ── Local AI config (machine-local, not part of the public repo) ──
 CLAUDE.md
+
+# ── Harness session state written INTO this tree by the local hooks ──
+# Session handoffs and guard marks land in synedre/state/ because the hooks
+# resolve paths from the CWD, not from the monolith root. They hold internal
+# context (backlog, legal posture, tenant work) and must never be published.
+synedre/
