@@ -173,7 +173,7 @@ _PRODUCT_OSS_CODENAMES = frozenset({"codemyshop", "codemyshop-demo"})
 
 # sy_client holds the CLIENT codename (<TENANT>, <TENANT>), not the TENANT
 # codename written in code (<TENANT>, <TENANT>-home, <TENANT>-v2): without the
-# fleet inventory, “autokur” entered roughly thirty core files without a single
+# fleet inventory, “<TENANT>” entered roughly thirty core files without a single
 # deny (observed 2026-09-14). The tenant inventory is sy_client_vps.
 _CODENAMES_SQL = (
     "SELECT codename FROM sy_client WHERE active=1 "

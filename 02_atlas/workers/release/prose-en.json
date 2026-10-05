@@ -1717,8 +1717,8 @@
  "    \".env\",               # level-2 secrets: global keys (Anthropic, Stripe…)\n    \"vault/\",             # off-repo credentials store\n"
 ],
 [
- "# sy_client porte le codename du CLIENT (<TENANT>, <TENANT>), pas celui du\n# TENANT qu'on écrit dans le code (autokur, <TENANT>-home, <TENANT>-v2) : sans la\n# flotte, « autokur » est entré dans une trentaine de fichiers du core sans un\n# seul deny (constaté le 2026-09-14). L'inventaire des tenants = sy_client_vps.\n",
- "# sy_client holds the CLIENT codename (<TENANT>, <TENANT>), not the TENANT\n# codename written in code (<TENANT>, <TENANT>-home, <TENANT>-v2): without the\n# fleet inventory, “autokur” entered roughly thirty core files without a single\n# deny (observed 2026-09-14). The tenant inventory is sy_client_vps.\n"
+ "# sy_client porte le codename du CLIENT (<TENANT>, <TENANT>), pas celui du\n# TENANT qu'on écrit dans le code (<TENANT>, <TENANT>-home, <TENANT>-v2) : sans la\n# flotte, « <TENANT> » est entré dans une trentaine de fichiers du core sans un\n# seul deny (constaté le 2026-09-14). L'inventaire des tenants = sy_client_vps.\n",
+ "# sy_client holds the CLIENT codename (<TENANT>, <TENANT>), not the TENANT\n# codename written in code (<TENANT>, <TENANT>-home, <TENANT>-v2): without the\n# fleet inventory, “<TENANT>” entered roughly thirty core files without a single\n# deny (observed 2026-09-14). The tenant inventory is sy_client_vps.\n"
 ],
 [
  "    \"\"\"Charge les codenames client (sy_client) ET tenant (sy_client_vps),\n    hors identifiants produit/OSS. Lève RuntimeError si KO.\"\"\"\n",
