@@ -69,9 +69,16 @@ for ENV_FILE in "$REPO/.env" "$REPO/.env.host"; do
     while IFS='=' read -r name val || [ -n "$name" ]; do
         # Ignore comments, empty lines, exports without '='.
         case "$name" in ''|\#*) continue;; esac
-        name=$(printf '%s' "$name" | sed 's/^[[:space:]]*export[[:space:]]*//; s/[[:space:]]*$//')
+        # Pure Bash: this hook runs on every Bash PreToolUse. The former loop
+        # launched sed + two grep processes per variable (~500 forks, 3.5 s per command).
+        name="${name#"${name%%[![:space:]]*}"}"
+        name="${name%"${name##*[![:space:]]}"}"
+        if [[ "$name" =~ ^export[[:space:]]+(.+)$ ]]; then
+            name="${BASH_REMATCH[1]}"
+        fi
+        upper_name="${name^^}"
         # Only target variables with a SENSITIVE name (reduces false positives).
-        printf '%s' "$name" | grep -qiE '(PASS|PASSWORD|SECRET|KEY|TOKEN|PWD|CRED|API)' || continue
+        [[ "$upper_name" =~ (PASS|PASSWORD|SECRET|KEY|TOKEN|PWD|CRED|API) ]] || continue
         # ...but an IDENTIFIER variable carries no secret: a login, a
         # user, an email, a host or a port are written in plaintext by nature. The
         # gate above catches them by accident when the name contains "API"
@@ -82,7 +89,7 @@ for ENV_FILE in "$REPO/.env" "$REPO/.env.host"; do
         # in the radar (false positive observed 2026-07-17, jobsite #448).
         # `_ID` is deliberately NOT excluded: AWS_ACCESS_KEY_ID stays armed (caution
         # on AWS keys — an FP there is rare, a hole would be costly).
-        if printf '%s' "$name" | grep -qiE '(_LOGIN|_USER|_USERNAME|_EMAIL|_FROM|_HOST|_PORT)$'; then
+        if [[ "$upper_name" =~ (_LOGIN|_USER|_USERNAME|_EMAIL|_FROM|_HOST|_PORT)$ ]]; then
             continue
         fi
         # Normalize the value AS THE SHELL SEES IT, not as the text writes it.
@@ -106,7 +113,7 @@ for ENV_FILE in "$REPO/.env" "$REPO/.env.host"; do
         [ "${#val}" -lt 8 ] && continue
         case "$val" in *' '*) continue;; esac
         # Does the VALUE appear literally in the command? (fixed-string)
-        if printf '%s' "$COMMAND" | grep -qF -- "$val"; then
+        if [[ "$COMMAND" == *"$val"* ]]; then
             MATCH_VAR="$name"
             break 2
         fi

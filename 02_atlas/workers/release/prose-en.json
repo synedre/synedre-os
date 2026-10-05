@@ -1699,4 +1699,9 @@
   "    ap.add_argument(\"--force\", action=\"store_true\", help=\"ignore le delta-gate (re-pull même si inchangé)\")\n    ap.add_argument(\"--dry-run\", action=\"store_true\", help=\"liste les frames retenues, aucune écriture\")\n",
   "    ap.add_argument(\"--force\", action=\"store_true\", help=\"ignore the delta-gate (re-pull even if unchanged)\")\n    ap.add_argument(\"--dry-run\", action=\"store_true\", help=\"list the selected frames, no writes\")\n"
  ]
+,
+[
+ "        # Pur Bash : ce hook est sur chaque Bash PreToolUse. L'ancienne boucle\n        # lançait sed + deux grep par variable (~500 forks, 3,5 s par commande).\n",
+ "        # Pure Bash: this hook runs on every Bash PreToolUse. The former loop\n        # launched sed + two grep processes per variable (~500 forks, 3.5 s per command).\n"
+]
 ]
