@@ -832,8 +832,8 @@
   "# Sensitive zones (asymmetry law): any path containing one of these substrings\n# triggers fail-closed when the primary DB is unreachable.\n# Hardening = add entries here; never remove one without a security review.\n"
  ],
  [
-  "    \".env\",               # secrets niveau 2 : clés globales (Anthropic, Stripe…)\n    \"secrets-backups/\",   # dépôt hors-repo credentials\n",
-  "    \".env\",               # level-2 secrets: global keys (Anthropic, Stripe…)\n    \"secrets-backups/\",   # off-repo credentials store\n"
+  "    \".env\",               # secrets niveau 2 : clés globales (Anthropic, Stripe…)\n    \"vault/\",   # dépôt hors-repo credentials\n",
+  "    \".env\",               # level-2 secrets: global keys (Anthropic, Stripe…)\n    \"vault/\",             # off-repo credentials store\n"
  ],
  [
   "    \"\"\"Exécute du SQL via docker exec psql. Lève RuntimeError si KO.\"\"\"\n",
@@ -864,8 +864,8 @@
   "# PRODUCT / OSS identifiers — NOT client tenants in the sense of the core\n# boundary. The tenant-codename guard forbids hardcoding a *client tenant\n# codename* inside codemyshop/core/ (OSS sovereignty). But \"codemyshop\" is\n# also the PRODUCT NAME, legitimately present in the canonical license header\n# `@author CodeMyShop | @copyright 2026 CodeMyShop` of the WHOLE core, and\n# \"codemyshop-demo\" is the OSS demo instance. Keeping them in the matcher\n# (word-boundary IGNORECASE regex) makes \"CodeMyShop\" match → DENY on every\n# new core file. They are therefore excluded from the matcher: fail-closed\n# stays intact for real tenants (<TENANT>, <TENANT>-v2, <TENANT>, …).\n"
  ],
  [
-  "    \"\"\"Charge les codenames TENANT actifs depuis sy_client (hors identifiants\n    produit/OSS). Lève RuntimeError si KO.\"\"\"\n",
-  "    \"\"\"Loads the active TENANT codenames from sy_client (excluding\n    product/OSS). Raises RuntimeError on failure.\"\"\"\n"
+  "    \"\"\"Charge les codenames client (sy_client) ET tenant (sy_client_vps),\n    hors identifiants produit/OSS. Lève RuntimeError si KO.\"\"\"\n",
+  "    \"\"\"Loads client (sy_client) and tenant (sy_client_vps) codenames,\n    excluding product/OSS identifiers. Raises RuntimeError on failure.\"\"\"\n"
  ],
  [
   "    \"\"\"Escape minimal pour SQL literal.\"\"\"\n",
@@ -1711,5 +1711,17 @@
 [
  "# `check_healthcheck` a été retiré : `sy_healthcheck.py` a été SUPPRIMÉ\n# délibérément le 2026-05-03 (e925b92eb, « batch dead archive Tier B1 »), au\n# motif que son cron.log n'était lu par personne et que le skill `/status`\n# (.claude/skills/status/SKILL.md) fait le work_order en tapant directement\n# docker/curl/git. L'appel a survécu à sa cible : son pré-vol le rendait certes\n# audible, mais il émettait un warning à CHAQUE session — donc un résumé global\n# « partial » permanent, sous lequel un vrai warning passait inaperçu.\n# Un avertissement que personne ne peut lever finit par ne plus rien avertir.\n",
  "# `check_healthcheck` was removed: `sy_healthcheck.py` was DELIBERATELY\n# deleted on 2026-05-03 (e925b92eb, “batch dead archive Tier B1”), because\n# nobody read its cron.log and the `/status` skill\n# (.claude/skills/status/SKILL.md) invokes the work order directly via\n# docker/curl/git. The call outlived its target: its preflight made it\n# audible, but it emitted a warning at EVERY session — a permanent “partial”\n# summary under which a real warning went unnoticed.\n# A warning nobody can clear eventually warns about nothing.\n"
+],
+[
+ "    \".env\",               # secrets niveau 2 : clés globales (Anthropic, Stripe…)\n    \"vault/\",   # dépôt hors-repo credentials\n",
+ "    \".env\",               # level-2 secrets: global keys (Anthropic, Stripe…)\n    \"vault/\",             # off-repo credentials store\n"
+],
+[
+ "# sy_client porte le codename du CLIENT (<TENANT>, <TENANT>), pas celui du\n# TENANT qu'on écrit dans le code (autokur, <TENANT>-home, <TENANT>-v2) : sans la\n# flotte, « autokur » est entré dans une trentaine de fichiers du core sans un\n# seul deny (constaté le 2026-09-14). L'inventaire des tenants = sy_client_vps.\n",
+ "# sy_client holds the CLIENT codename (<TENANT>, <TENANT>), not the TENANT\n# codename written in code (<TENANT>, <TENANT>-home, <TENANT>-v2): without the\n# fleet inventory, “autokur” entered roughly thirty core files without a single\n# deny (observed 2026-09-14). The tenant inventory is sy_client_vps.\n"
+],
+[
+ "    \"\"\"Charge les codenames client (sy_client) ET tenant (sy_client_vps),\n    hors identifiants produit/OSS. Lève RuntimeError si KO.\"\"\"\n",
+ "    \"\"\"Loads client (sy_client) and tenant (sy_client_vps) codenames,\n    excluding product/OSS identifiers. Raises RuntimeError on failure.\"\"\"\n"
 ]
 ]

@@ -56,7 +56,7 @@ _SENSITIVE_PATH_MARKERS: tuple[str, ...] = (
     "codemyshop/core/",   # OSS core — historique
     ".env.host",          # secrets niveau 1 : SSH + root DB + SMTP
     ".env",               # level-2 secrets: global keys (Anthropic, Stripe…)
-    "secrets-backups/",   # off-repo credentials store
+    "vault/",             # off-repo credentials store
 )
 
 
@@ -171,15 +171,26 @@ def _load_reflexes(event: str) -> list[dict]:
 _PRODUCT_OSS_CODENAMES = frozenset({"codemyshop", "codemyshop-demo"})
 
 
+# sy_client holds the CLIENT codename (<TENANT>, <TENANT>), not the TENANT
+# codename written in code (<TENANT>, <TENANT>-home, <TENANT>-v2): without the
+# fleet inventory, “autokur” entered roughly thirty core files without a single
+# deny (observed 2026-09-14). The tenant inventory is sy_client_vps.
+_CODENAMES_SQL = (
+    "SELECT codename FROM sy_client WHERE active=1 "
+    "UNION SELECT deploy_codename FROM sy_client_vps "
+    "WHERE active=1 AND deploy_codename IS NOT NULL AND deploy_codename <> '';"
+)
+
+
 def _load_codenames() -> list[str]:
-    """Loads the active TENANT codenames from sy_client (excluding
-    product/OSS). Raises RuntimeError on failure."""
-    raw = _run_sql("SELECT codename FROM sy_client WHERE active=1;")
-    return [
+    """Loads client (sy_client) and tenant (sy_client_vps) codenames,
+    excluding product/OSS identifiers. Raises RuntimeError on failure."""
+    raw = _run_sql(_CODENAMES_SQL)
+    return sorted({
         c
         for line in raw.splitlines()
         if (c := line.strip()) and c.lower() not in _PRODUCT_OSS_CODENAMES
-    ]
+    })
 
 
 def _esc(value) -> str:
@@ -224,6 +235,8 @@ def _log_audit(
     If the DB is unreachable, falls back to a local JSONL file safety net
     (debt settled) — the trace of a deny survives a DB outage.
     """
+    if os.environ.get("SY_REFLEX_AUDIT_DISABLED") == "1":
+        return
     record = {
         "id_reflex": id_reflex, "event": event, "tool_name": tool_name,
         "file_path": file_path, "decision": decision, "reason": reason,
