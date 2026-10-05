@@ -91,7 +91,10 @@ def resolve_private_config_path(preferred: Path | str) -> Path:
     pref = Path(preferred)
     if pref.is_file():
         return pref
-    example = pref.with_suffix(pref.suffix + ".example")
+    # Public templates follow ``name.example.json`` while the private file
+    # remains ``name.json``. Appending ``.example`` would seek a file that is
+    # never distributed: ``name.json.example``.
+    example = pref.with_name(f"{pref.stem}.example{pref.suffix}")
     if example.is_file():
         return example
     raise FileNotFoundError(f"no private config at {pref} (nor {example})")

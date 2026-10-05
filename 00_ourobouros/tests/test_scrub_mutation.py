@@ -201,6 +201,15 @@ def test_db_password_flag_no_false_positive_on_fstring():
     assert not [f for f in _gate(text) if f.category == "db_password_cli"]
 
 
+def test_private_config_resolver_falls_back_to_public_example(tmp_path):
+    """A fresh clone has ``name.example.json``, not ``name.json.example``."""
+    preferred = tmp_path / "sy_private_config.json"
+    example = tmp_path / "sy_private_config.example.json"
+    example.write_text("{}", encoding="utf-8")
+
+    assert sy_scrub.resolve_private_config_path(preferred) == example
+
+
 def test_lexicon_boundaries_no_false_positive():
     """Mid-word hits must NOT fire: plain-language words containing a lexicon
     token ('moustache', 'detache', 'travailler') and accent-adjacent forms
