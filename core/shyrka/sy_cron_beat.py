@@ -79,10 +79,17 @@ def beat(script_name: str, status: str = "ok", duration_ms: int | None = None) -
             except (TypeError, ValueError):
                 dur = None  # garbage duration = no duration; never a reason not to beat
 
+        # `fail_since` = the start of the current FAILURE SERIES, not this failure:
+        # keep the first value (COALESCE) while it is failing, then clear it once it
+        # returns to 'ok'. The column is therefore NULL precisely when the last
+        # beat succeeded — allowing the deadman to distinguish an isolated failure
+        # from an established outage without a counter or arbitrary threshold.
         out = _run_sql_write(
             f"UPDATE {DB_NAME}.sy_cron_heartbeat "
             f"   SET last_beat_at = now(), "
             f"       last_status = {_esc(status)}, "
+            f"       fail_since = CASE WHEN {_esc(status)} = 'fail' "
+            f"                         THEN COALESCE(fail_since, now()) END, "
             f"       last_duration_ms = {_esc(dur)} "
             f" WHERE script_name = {_esc(script_name)} "
             f"RETURNING script_name;"

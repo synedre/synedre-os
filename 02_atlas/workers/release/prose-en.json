@@ -1703,5 +1703,9 @@
 [
  "        # Pur Bash : ce hook est sur chaque Bash PreToolUse. L'ancienne boucle\n        # lançait sed + deux grep par variable (~500 forks, 3,5 s par commande).\n",
  "        # Pure Bash: this hook runs on every Bash PreToolUse. The former loop\n        # launched sed + two grep processes per variable (~500 forks, 3.5 s per command).\n"
+],
+[
+ "        # `fail_since` = début de la SÉRIE d'échecs en cours, pas de cet échec-ci :\n        # on garde le premier (COALESCE) tant que ça rate, et on efface dès que ça\n        # repasse 'ok'. La colonne est donc NULL exactement quand le dernier\n        # battement est un succès — c'est ce qui permet au deadman de séparer un\n        # raté isolé d'une panne installée, sans compteur ni seuil arbitraire.\n",
+ "        # `fail_since` = the start of the current FAILURE SERIES, not this failure:\n        # keep the first value (COALESCE) while it is failing, then clear it once it\n        # returns to 'ok'. The column is therefore NULL precisely when the last\n        # beat succeeded — allowing the deadman to distinguish an isolated failure\n        # from an established outage without a counter or arbitrary threshold.\n"
 ]
 ]
