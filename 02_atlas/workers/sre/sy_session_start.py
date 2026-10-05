@@ -2,8 +2,11 @@
 """
 sy_session_start.py — Automatic Phase 0 checks at Synedre session startup.
 
-Runs sequentially: healthcheck, automation errors, cron verification,
-git status, log freshness, calendar reminder, and P0 inbox scan.
+Runs sequentially: automation errors, cron verification, git status,
+log freshness, calendar reminder, and P0 inbox scan.
+
+Infrastructure health belongs to the `/status` skill, not here (see the
+removed `check_healthcheck` block below).
 
 Usage :
     python3 synedre/sy_session_start.py
@@ -55,21 +58,17 @@ def _run(cmd: list[str], cwd: str | None = None, timeout: int = 30) -> tuple[int
     except subprocess.TimeoutExpired:
         return 1, f"TIMEOUT ({timeout}s)"
     except FileNotFoundError:
-        return 1, f"Commande introuvable : {cmd[0]}"
+        return 1, f"Command not found: {cmd[0]}"
 
 
-def check_healthcheck(log: AutomateLog) -> str:
-    """Runs sy_healthcheck.py and captures the output."""
-    with log.timed_step("healthcheck") as s:
-        script = str(SCRIPT_DIR / "sy_healthcheck.py")
-        if not Path(script).exists():
-            s.warning(f"Script introuvable : {script}")
-            return f"[WARNING] {script} introuvable"
-        code, output = _run(["python3", script], cwd=str(PROJECT_ROOT), timeout=30)
-        if code != 0:
-            s.error(f"Exit code {code}")
-        detail = output[:500] if output else "(no output)"
-        return detail
+# `check_healthcheck` was removed: `sy_healthcheck.py` was DELIBERATELY
+# deleted on 2026-05-03 (e925b92eb, “batch dead archive Tier B1”), because
+# nobody read its cron.log and the `/status` skill
+# (.claude/skills/status/SKILL.md) invokes the work order directly via
+# docker/curl/git. The call outlived its target: its preflight made it
+# audible, but it emitted a warning at EVERY session — a permanent “partial”
+# summary under which a real warning went unnoticed.
+# A warning nobody can clear eventually warns about nothing.
 
 
 def check_automate_errors(log: AutomateLog) -> str:
@@ -211,7 +210,6 @@ def main() -> None:
         print("=" * 60)
 
         checks = [
-            ("Healthcheck", check_healthcheck),
             ("Automate errors", check_automate_errors),
             ("Cron check", check_crons),
             ("Git status", check_git_status),

@@ -1308,8 +1308,8 @@
   "sy_session_start.py — Automatic Phase 0 checks at Synedre session startup.\n"
  ],
  [
-  "Lance séquentiellement : healthcheck, erreurs automates, vérification crons,\ngit status, fraîcheur des logs, rappel calendrier, et scan inbox P0.\n",
-  "Runs sequentially: healthcheck, automation errors, cron verification,\ngit status, log freshness, calendar reminder, and P0 inbox scan.\n"
+  "Lance séquentiellement : erreurs automates, vérification crons, git status,\nfraîcheur des logs, rappel calendrier, et scan inbox P0.\n\nL'état de santé infra relève du skill `/status`, pas d'ici (cf. le bloc\n`check_healthcheck` retiré plus bas).\n",
+  "Runs sequentially: automation errors, cron verification, git status,\nlog freshness, calendar reminder, and P0 inbox scan.\n\nInfrastructure health belongs to the `/status` skill, not here (see the\nremoved `check_healthcheck` block below).\n"
  ],
  [
   "# Chemins absolus basés sur la position du script\n",
@@ -1326,15 +1326,7 @@
  [
   "    \"\"\"Exécute une commande et retourne (returncode, output).\"\"\"\n",
   "    \"\"\"Runs a command and returns (returncode, output).\"\"\"\n"
- ],
- [
-  "    \"\"\"Lance sy_healthcheck.py et capture la sortie.\"\"\"\n",
-  "    \"\"\"Runs sy_healthcheck.py and captures the output.\"\"\"\n"
- ],
- [
-  "        detail = output[:500] if output else \"(aucune sortie)\"\n",
-  "        detail = output[:500] if output else \"(no output)\"\n"
- ],
+],
  [
   "    \"\"\"Lance sy_logger.py --errors pour lister les erreurs automates.\"\"\"\n",
   "    \"\"\"Runs sy_logger.py --errors to list automation errors.\"\"\"\n"
@@ -1707,5 +1699,17 @@
 [
  "        # `fail_since` = début de la SÉRIE d'échecs en cours, pas de cet échec-ci :\n        # on garde le premier (COALESCE) tant que ça rate, et on efface dès que ça\n        # repasse 'ok'. La colonne est donc NULL exactement quand le dernier\n        # battement est un succès — c'est ce qui permet au deadman de séparer un\n        # raté isolé d'une panne installée, sans compteur ni seuil arbitraire.\n",
  "        # `fail_since` = the start of the current FAILURE SERIES, not this failure:\n        # keep the first value (COALESCE) while it is failing, then clear it once it\n        # returns to 'ok'. The column is therefore NULL precisely when the last\n        # beat succeeded — allowing the deadman to distinguish an isolated failure\n        # from an established outage without a counter or arbitrary threshold.\n"
+],
+[
+ "Lance séquentiellement : erreurs automates, vérification crons, git status,\nfraîcheur des logs, rappel calendrier, et scan inbox P0.\n\nL'état de santé infra relève du skill `/status`, pas d'ici (cf. le bloc\n`check_healthcheck` retiré plus bas).\n",
+ "Runs sequentially: automation errors, cron verification, git status,\nlog freshness, calendar reminder, and P0 inbox scan.\n\nInfrastructure health belongs to the `/status` skill, not here (see the\nremoved `check_healthcheck` block below).\n"
+],
+[
+ "        return 1, f\"Commande introuvable : {cmd[0]}\"\n",
+ "        return 1, f\"Command not found: {cmd[0]}\"\n"
+],
+[
+ "# `check_healthcheck` a été retiré : `sy_healthcheck.py` a été SUPPRIMÉ\n# délibérément le 2026-05-03 (e925b92eb, « batch dead archive Tier B1 »), au\n# motif que son cron.log n'était lu par personne et que le skill `/status`\n# (.claude/skills/status/SKILL.md) fait le work_order en tapant directement\n# docker/curl/git. L'appel a survécu à sa cible : son pré-vol le rendait certes\n# audible, mais il émettait un warning à CHAQUE session — donc un résumé global\n# « partial » permanent, sous lequel un vrai warning passait inaperçu.\n# Un avertissement que personne ne peut lever finit par ne plus rien avertir.\n",
+ "# `check_healthcheck` was removed: `sy_healthcheck.py` was DELIBERATELY\n# deleted on 2026-05-03 (e925b92eb, “batch dead archive Tier B1”), because\n# nobody read its cron.log and the `/status` skill\n# (.claude/skills/status/SKILL.md) invokes the work order directly via\n# docker/curl/git. The call outlived its target: its preflight made it\n# audible, but it emitted a warning at EVERY session — a permanent “partial”\n# summary under which a real warning went unnoticed.\n# A warning nobody can clear eventually warns about nothing.\n"
 ]
 ]
