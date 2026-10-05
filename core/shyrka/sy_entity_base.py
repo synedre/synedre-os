@@ -116,8 +116,26 @@ def _dedup_day() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d")
 
 
-def _run_sql_write(sql: str) -> str:
+def _bind(sql: str, params) -> str:
+    """Renders `params` into `sql` through `sy_db.mogrify` — a real driver's quoting.
+
+    This replaces `_esc()`: with bound parameters, escaping is no longer a concern.
+    `params=None` leaves SQL unchanged, so hundreds of legacy callers change not one
+    character — the debt is repaid file by file, without a big bang in the foundation.
+
+    ⚠️ `%`: without `params`, SQL is sent AS IS; with parameters, every literal `%`
+    must be doubled (`LIKE '%%x%%'`), otherwise mogrify interprets it as a placeholder.
+    """
+    if not params:
+        return sql
+    from sy_db import mogrify  # noqa: PLC0415 — lazy: no I/O at import time (scar #370)
+    return mogrify(sql, params)
+
+
+def _run_sql_write(sql: str, params: tuple | list | None = None) -> str:
     """Executes write SQL via a stdin file (handles apostrophes/newlines).
+
+    `params` (optional) goes through `_bind`: bound values, nothing left to escape.
 
     Prepends `SET search_path TO shyrka;` for unqualified queries
     (safety — the _qualify() helpers already qualify everything).
@@ -129,7 +147,7 @@ def _run_sql_write(sql: str) -> str:
     overwrites, worker A execs and reads B's file → INSERT silently
     lost, parallel multi-jobsite S3 broken.
     """
-    full_sql = f"SET search_path TO {PG_SCHEMA}, public;\n{sql}"
+    full_sql = f"SET search_path TO {PG_SCHEMA}, public;\n{_bind(sql, params)}"
     if _USE_POOL:
         try:
             from synedre.sy_pg_pool import pool_write
@@ -167,8 +185,10 @@ def _run_sql_write(sql: str) -> str:
         os.unlink(tmp_path)
 
 
-def _run_sql_read(sql: str) -> str:
+def _run_sql_read(sql: str, params: tuple | list | None = None) -> str:
     """Executes read SQL via psql.
+
+    `params` (optional) goes through `_bind`: bound values, nothing left to escape.
 
     Tab-separated tuple-only output (-tA -F$'\\t') for compat with
     the legacy code that parses lines via .split('\\t').
@@ -177,7 +197,7 @@ def _run_sql_read(sql: str) -> str:
     (current_task, next_action, description…): the split on \\n breaks the
     parsing. Use _run_sql_csv() instead.
     """
-    full_sql = f"SET search_path TO {PG_SCHEMA}, public; {sql}"
+    full_sql = f"SET search_path TO {PG_SCHEMA}, public; {_bind(sql, params)}"
     if _USE_POOL:
         try:
             from synedre.sy_pg_pool import pool_read
@@ -197,8 +217,10 @@ def _run_sql_read(sql: str) -> str:
     return r.stdout.rstrip("\n")
 
 
-def _run_sql_csv(sql: str) -> list[list[str]]:
+def _run_sql_csv(sql: str, params: tuple | list | None = None) -> list[list[str]]:
     """Executes read SQL, returns the parsed rows (CSV mode).
+
+    `params` (optional) goes through `_bind`: bound values, nothing left to escape.
 
     Unlike _run_sql_read, correctly handles TEXT columns
     containing newlines via CSV quoting (RFC 4180). Bug fix
@@ -210,7 +232,7 @@ def _run_sql_csv(sql: str) -> list[list[str]]:
     """
     import csv
     import io
-    full_sql = f"SET search_path TO {PG_SCHEMA}, public; {sql}"
+    full_sql = f"SET search_path TO {PG_SCHEMA}, public; {_bind(sql, params)}"
     if _USE_POOL:
         try:
             from synedre.sy_pg_pool import pool_csv
@@ -273,14 +295,14 @@ class Entity:
         if self.pk and self.pk not in col_list:
             col_list = [self.pk] + col_list
         cols = ",".join(col_list) if col_list else "*"
-        out = _run_sql_read(
+        # Use _run_sql_csv instead of _run_sql_read to support multi-line TEXT columns
+        # natively, without corrupting/truncating dictionaries
+        # (backlog #368, scar 2026-07-17).
+        raw_rows = _run_sql_csv(
             f"SELECT {cols} FROM {_qualify(self.table)} {where};"
         )
-        rows = []
-        for line in out.splitlines():
-            cells = line.split("\t")
-            rows.append(dict(zip(col_list, cells)))
-        return rows
+        return [dict(zip(col_list, cells)) for cells in raw_rows]
+
 
     # ── CRUD ─────────────────────────────────────────────────────────────
 

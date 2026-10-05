@@ -1723,5 +1723,21 @@
 [
  "    \"\"\"Charge les codenames client (sy_client) ET tenant (sy_client_vps),\n    hors identifiants produit/OSS. Lève RuntimeError si KO.\"\"\"\n",
  "    \"\"\"Loads client (sy_client) and tenant (sy_client_vps) codenames,\n    excluding product/OSS identifiers. Raises RuntimeError on failure.\"\"\"\n"
+],
+[
+ "    \"\"\"Rend `params` dans `sql` par `sy_db.mogrify` — le quoting d'un vrai driver.\n\n    C'est la voie qui remplace `_esc()` : avec des paramètres liés, la question de\n    l'échappement ne se pose plus. `params=None` laisse le SQL intact, donc les\n    centaines d'appelants historiques ne changent pas d'un caractère — la dette se\n    rembourse fichier par fichier, sans big bang sur le socle.\n\n    ⚠️ `%` : sans `params` le SQL part TEL QUEL ; avec, tout `%` littéral doit être\n    doublé (`LIKE '%%x%%'`), sinon mogrify le lit comme un placeholder.\n    \"\"\"\n",
+ "    \"\"\"Renders `params` into `sql` through `sy_db.mogrify` — a real driver's quoting.\n\n    This replaces `_esc()`: with bound parameters, escaping is no longer a concern.\n    `params=None` leaves SQL unchanged, so hundreds of legacy callers change not one\n    character — the debt is repaid file by file, without a big bang in the foundation.\n\n    ⚠️ `%`: without `params`, SQL is sent AS IS; with parameters, every literal `%`\n    must be doubled (`LIKE '%%x%%'`), otherwise mogrify interprets it as a placeholder.\n    \"\"\"\n"
+],
+[
+ "    `params` (optionnel) passe par `_bind` : valeurs liées, plus rien à échapper.\n",
+ "    `params` (optional) goes through `_bind`: bound values, nothing left to escape.\n"
+],
+[
+ "    from sy_db import mogrify  # noqa: PLC0415 — lazy : pas d'I/O à l'import (cic #370)\n",
+ "    from sy_db import mogrify  # noqa: PLC0415 — lazy: no I/O at import time (scar #370)\n"
+],
+[
+ "        # Utilisation de _run_sql_csv au lieu de _run_sql_read pour supporter\n        # nativement les colonnes TEXT multi-lignes sans corruption/tronquage de dicts\n        # (backlog #368, scar 2026-07-17).\n",
+ "        # Use _run_sql_csv instead of _run_sql_read to support multi-line TEXT columns\n        # natively, without corrupting/truncating dictionaries\n        # (backlog #368, scar 2026-07-17).\n"
 ]
 ]
