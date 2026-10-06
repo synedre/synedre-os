@@ -32,6 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sy_entity_base import _run_sql_csv, _run_sql_write, _esc, DB_NAME  # noqa: E402
+from sy_daily_meet import publier_snapshot  # noqa: E402
 
 try:
     from synedre.sy_agent_call import invoke_agent  # noqa: E402
@@ -101,6 +102,55 @@ def dim_apprentissage() -> dict:
             "summary": note + "."}
 
 
+def _automates_sql(errors_rel: str, automates_rel: str) -> str:
+    """The three counters of the automates dimension, over injectable relations.
+
+    Relation names are parameters so that the query is REPLAYABLE against
+    fixtures (`(VALUES …)`) without writing a row to the database: this is what
+    makes the bug below demonstrable by mutation. They never come from external input.
+
+    SCAR (2026-08-20, twin of cron rearming): the `deact` counter read
+    `count(DISTINCT script_name) FILTER (WHERE deactivated <> 0)` over the ENTIRE table,
+    with no time bound or concept of a “last row”. Yet `sy_cron_errors` is an
+    EVENT LOG, not a state table: the shutdown row remains written forever,
+    even when a `recovered` follows it three minutes later. Measurement on
+    20/08: 6 scripts counted as “disabled”, none actually was — the oldest had
+    restarted on 08/06. The dimension therefore rendered `critical`, score 0,
+    PERMANENTLY, making a real critical impossible to detect. The same confusion that
+    cost 19 h of `sy_atlas_inbox_poll`: a past event is not a current state.
+
+    Hence `DISTINCT ON (script_name)`: we consider only the LAST row of each
+    script. `id_error DESC` breaks ties between two events in the same second — without it,
+    the ordering would be indeterminate and the verdict could oscillate from one run to another.
+
+    `err24` (error flow over 24 h) and `unregistered` (registry gap) keep their
+    semantics: the former rightly counts events, the latter a state that lasts as long
+    as `sy_automates` remains incomplete.
+    """
+    return (
+        f"SELECT "  # sql-ident:allow errors_rel and automates_rel are RELATION NAMES
+        # (real table in production, `(VALUES …)` subquery under test): an
+        # identifier cannot be passed as a bound parameter. No value is
+        # interpolated here, and neither name comes from external input.
+        f"  (SELECT count(*) FROM {errors_rel} e "
+        f"     LEFT JOIN {automates_rel} a "
+        f"       ON a.key_name = regexp_replace(e.script_name, '\\.py$', '') "
+        f"    WHERE e.date_add > now()-interval '24h' "
+        f"      AND a.scope='synedre' AND a.active=1), "
+        f"  (SELECT count(*) FROM ("
+        f"        SELECT DISTINCT ON (script_name) script_name, deactivated "
+        f"          FROM {errors_rel} x "
+        f"         ORDER BY script_name, date_add DESC, id_error DESC) d "
+        f"     JOIN {automates_rel} a "
+        f"       ON a.key_name = regexp_replace(d.script_name, '\\.py$', '') "
+        f"    WHERE d.deactivated <> 0 AND a.scope='synedre' AND a.active=1), "
+        f"  (SELECT count(DISTINCT e.script_name) FROM {errors_rel} e "
+        f"     LEFT JOIN {automates_rel} a "
+        f"       ON a.key_name = regexp_replace(e.script_name, '\\.py$', '') "
+        f"    WHERE a.key_name IS NULL);"
+    )
+
+
 def dim_automates() -> dict:
     # Scope-aware: the engine's health only counts automations EXPLICITLY
     # registered scope='synedre' AND active. A codemyshop-oss/tenant automation
@@ -112,17 +162,12 @@ def dim_automates() -> dict:
     # longer charged to Synedre as an outage — it feeds a SEPARATE "registry gap"
     # signal (housekeeping, WARN), not a false critical. The registry must stay
     # complete (cf sy_automates): register every script logging into sy_cron_errors.
-    r = _run_sql_csv(
-        f"SELECT "
-        f"  count(*) FILTER (WHERE e.date_add > now()-interval '24h' "
-        f"                   AND a.scope='synedre' AND a.active=1), "
-        f"  count(DISTINCT e.script_name) FILTER (WHERE e.deactivated <> 0 "
-        f"                   AND a.scope='synedre' AND a.active=1), "
-        f"  count(DISTINCT e.script_name) FILTER (WHERE a.key_name IS NULL) "
-        f"FROM {DB_NAME}.sy_cron_errors e "
-        f"LEFT JOIN {DB_NAME}.sy_automates a "
-        f"  ON a.key_name = regexp_replace(e.script_name, '\\.py$', '');"
-    )
+    #
+    # `deact` = scripts OFF AT THIS INSTANT, not those that were off one day:
+    # selecting the last row per script lives in _automates_sql, which also carries
+    # the 20/08 scar (6 counted, none off).
+    r = _run_sql_csv(_automates_sql(f"{DB_NAME}.sy_cron_errors",
+                                    f"{DB_NAME}.sy_automates"))
     err24, deact, unregistered = (int(x) for x in r[0]) if r else (0, 0, 0)
     # Health = only the registered synedre scope. A registry gap degrades at
     # most to WARN (to be classified), never to critical (not a Synedre outage).
@@ -203,13 +248,10 @@ def report_to_meet(dims: list[dict], glob: dict, note: str | None) -> None:
     if note:
         detail += f"\n\n🫂 Winnicott — « {note} »"
     key = "conscience-health"
-    _run_sql_write(
-        f"DELETE FROM {DB_NAME}.sy_daily_meet WHERE item_key={_esc(key)} AND date_add::date=CURRENT_DATE;"
-    )
-    _run_sql_write(
-        f"INSERT INTO {DB_NAME}.sy_daily_meet (item_key, title, detail, severity, status, type, agent, occurrences) "
-        f"VALUES ({_esc(key)}, {_esc(title)}, {_esc(detail)}, {_esc(sev)}, 'open', 'conscience_health', 'sante', 1);"
-    )
+    # A snapshot replaces the previous day's rather than being added to it: see
+    # sy_daily_meet (98 stacked `open` reports on 11/09, all critical).
+    publier_snapshot(key, title, detail, severity=sev,
+                     type_="conscience_health", agent="sante")
 
 
 def main() -> int:
