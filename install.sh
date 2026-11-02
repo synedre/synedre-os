@@ -74,20 +74,32 @@ ln -sf $(pwd)/03_sun_wukong/skills/system_jobsite.md .kimirules
 
 echo "🔗 Configuring the DNA of AI agents..."
 
-# Create the hidden folder if it does not exist
-mkdir -p ~/.claude
-
-# Symlink the full settings file
-ln -sf $(pwd)/02_atlas/config/claude/claude_settings.json ~/.claude/settings.json
-
-echo "  ↳ Claude Code brain (Permissions, Hooks, Status) locked onto Atlas."
+# Claude Code settings are PROJECT-scoped: compiled into ./.claude/settings.json
+# (gitignored). The user's global ~/.claude/settings.json is never touched —
+# overwriting it would wipe their own permissions, hooks and preferences.
+CLAUDE_TPL="02_atlas/config/claude/claude_settings.tpl.json"
+mkdir -p .claude
+if [ -s "$CLAUDE_TPL" ]; then
+    sed "s|__SYNEDRE_ROOT__|$PWD|g" "$CLAUDE_TPL" > .claude/settings.json
+    echo "  ↳ Claude Code settings compiled into ./.claude/settings.json (project scope)."
+else
+    echo "  ↳ Claude Code template is empty — nothing compiled."
+fi
+echo "  ↳ ~/.claude/settings.json left untouched."
 
 echo "🔗 Compiling the DNA of Kimi Code..."
 
-# Create the target folder (Kimi often uses ~/.kimi-code)
-mkdir -p ~/.kimi-code
-
-# Compile the TOML template with sed
-sed "s|__SYNEDRE_ROOT__|$PWD|g" 02_atlas/config/kimi/kimi_config.tpl.toml > ~/.kimi-code/config.toml
-
-echo "  ↳ config.toml generated successfully for Kimi."
+# Never overwrite an existing user config: write next to it instead.
+KIMI_TPL="02_atlas/config/kimi/kimi_config.tpl.toml"
+KIMI_CFG="$HOME/.kimi-code/config.toml"
+if [ ! -s "$KIMI_TPL" ]; then
+    echo "  ↳ Kimi template is empty — nothing compiled."
+else
+    mkdir -p "$HOME/.kimi-code"
+    if [ -e "$KIMI_CFG" ]; then
+        KIMI_CFG="$HOME/.kimi-code/config.synedre.toml"
+        echo "  ↳ Existing ~/.kimi-code/config.toml kept; Synedre version written alongside."
+    fi
+    sed "s|__SYNEDRE_ROOT__|$PWD|g" "$KIMI_TPL" > "$KIMI_CFG"
+    echo "  ↳ Kimi config generated: $KIMI_CFG"
+fi
